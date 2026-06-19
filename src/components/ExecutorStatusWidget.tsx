@@ -178,10 +178,12 @@ export const ExecutorStatusWidget: React.FC<ExecutorStatusWidgetProps> = ({
             {ultimoTrade ? (
               <div className="flex flex-col gap-0.5">
                 <div className="flex items-center justify-between">
-                  <span className={ultimoTrade.tipo.includes('BUY') || ultimoTrade.tipo.includes('LONG') ? 'text-brand-green' : 'text-brand-red'}>
-                    {ultimoTrade.tipo}
+                  <span className={(ultimoTrade.tipo || '').includes('BUY') || (ultimoTrade.tipo || '').includes('LONG') ? 'text-brand-green' : 'text-brand-red'}>
+                    {ultimoTrade.tipo || 'DESCONOCIDO'}
                   </span>
-                  <span className="text-white font-bold">${ultimoTrade.precio.toLocaleString()}</span>
+                  <span className="text-white font-bold">
+                    {ultimoTrade.precio && !isNaN(ultimoTrade.precio) ? `$${ultimoTrade.precio.toLocaleString()}` : '---'}
+                  </span>
                 </div>
                 {ultimoTrade.mensaje && <span className="text-[10px] text-slate-500 font-normal">{ultimoTrade.mensaje}</span>}
               </div>

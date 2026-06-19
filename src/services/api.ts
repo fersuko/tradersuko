@@ -513,18 +513,18 @@ export const getExecutorStatus = async (): Promise<{ status: ExecutorStatus; isM
         disponibles: Number(raw.circuit_breaker.disponibles)
       },
       ultimoTrade: raw.ultimo_trade ? {
-        timestamp: String(raw.ultimo_trade.timestamp),
-        tipo: String(raw.ultimo_trade.tipo),
-        precio: Number(raw.ultimo_trade.precio),
+        timestamp: String(raw.ultimo_trade.timestamp || new Date().toISOString()),
+        tipo: String(raw.ultimo_trade.tipo || raw.ultimo_trade.side || raw.ultimo_trade.tipo_orden || 'TRADE'),
+        precio: Number(raw.ultimo_trade.precio || raw.ultimo_trade.price || 0),
         mensaje: raw.ultimo_trade.mensaje ? String(raw.ultimo_trade.mensaje) : undefined
       } : null,
       ultimaSenal: raw.ultima_senal ? {
-        timestamp: String(raw.ultima_senal.timestamp),
-        tipo: String(raw.ultima_senal.tipo),
+        timestamp: String(raw.ultima_senal.timestamp || new Date().toISOString()),
+        tipo: String(raw.ultima_senal.tipo || raw.ultima_senal.tipo_senal || 'SIGNAL'),
         mensaje: raw.ultima_senal.mensaje ? String(raw.ultima_senal.mensaje) : undefined
       } : null,
       ultimoInicio: raw.ultimo_inicio ? {
-        timestamp: String(raw.ultimo_inicio.timestamp),
+        timestamp: String(raw.ultimo_inicio.timestamp || new Date().toISOString()),
         version: raw.ultimo_inicio.version ? String(raw.ultimo_inicio.version) : undefined
       } : null
     };
