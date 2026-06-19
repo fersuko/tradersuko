@@ -95,7 +95,7 @@ export const Dashboard: React.FC = () => {
       const [result, pocResult, alertsResult, radarResult, executorResult] = await Promise.all([
         getTelemetria(limit),
         getPoc(),
-        getAlertas(10),
+        getAlertas(25),
         getRadar(),
         getExecutorStatus()
       ]);

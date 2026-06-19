@@ -53,7 +53,7 @@ export const AlertsLog: React.FC<AlertsLogProps> = ({ alerts, isLoading, isMocke
   };
 
   return (
-    <div className="glass-panel rounded-xl p-5 border border-slate-800 flex flex-col h-[280px]">
+    <div className="glass-panel rounded-xl p-5 border border-slate-800 flex flex-col h-[680px]">
       
       {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-900 pb-3 mb-3 shrink-0">
