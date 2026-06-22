@@ -80,5 +80,30 @@ export interface RadarData {
   condicionesNecesarias: number;
 }
 
+export interface PositionData {
+  id: number;
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  entryPrice: number;
+  markPrice: number;
+  size: number;
+  leverage: number;
+  pnl: number;
+  stopLoss: number;
+  takeProfit: number | null;
+  rActive: number;
+  rDistance: number;
+  pnlType: string;
+}
+
+export interface TradeData {
+  id: number;
+  timestamp: string;
+  side: 'LONG' | 'SHORT';
+  entryPrice: number;
+  rMultiple: number;
+  pnl: number;
+}
+
 
 

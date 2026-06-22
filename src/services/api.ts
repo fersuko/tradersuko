@@ -1,4 +1,4 @@
-import type { TelemetriaResponse, TelemetriaRegistro, SystemConfig, PocData, SystemAlert, RadarData, ExecutorStatus, ModoSistema } from '../types';
+import type { TelemetriaResponse, TelemetriaRegistro, SystemConfig, PocData, SystemAlert, RadarData, ExecutorStatus, ModoSistema, PositionData, TradeData } from '../types';
 
 // URL base de la API desde las variables de entorno de Vite o fallback a la IP de Tailscale provista
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://100.91.150.120:8000';
@@ -568,6 +568,131 @@ export const getExecutorStatus = async (): Promise<{ status: ExecutorStatus; isM
       },
       isMocked: true
     };
+  }
+};
+
+/**
+ * Obtiene la posición activa actual desde el VPS.
+ */
+export const getPosition = async (): Promise<{ position: PositionData | null; isMocked: boolean }> => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/position`, {
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' }
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+    const rawData = await response.json();
+    const raw = rawData.position;
+
+    if (!raw) return { position: null, isMocked: false };
+
+    const position: PositionData = {
+      id: Number(raw.id),
+      symbol: String(raw.symbol),
+      side: raw.side as 'LONG' | 'SHORT',
+      entryPrice: Number(raw.entry_price || raw.entryPrice || 0),
+      markPrice: Number(raw.mark_price || raw.markPrice || 0),
+      size: Number(raw.size || 0),
+      leverage: Number(raw.leverage || 10),
+      pnl: Number(raw.pnl || 0),
+      stopLoss: Number(raw.stop_loss || raw.stopLoss || 0),
+      takeProfit: raw.take_profit ? Number(raw.take_profit) : null,
+      rActive: Number(raw.r_active ?? raw.rActive ?? 0),
+      rDistance: Number(raw.r_distance ?? raw.rDistance ?? 0),
+      pnlType: String(raw.pnl_type || raw.pnlType || 'MARK_TO_MARKET')
+    };
+
+    return { position, isMocked: false };
+  } catch (error) {
+    console.warn('Fallo al obtener posición del VPS. Usando mock.', error);
+    
+    const isSimulatedActive = localConfig.modoSistema !== 'SIMULACION';
+    if (!isSimulatedActive) {
+      return { position: null, isMocked: true };
+    }
+
+    const lastPrice = simulatedData.length > 0 ? simulatedData[simulatedData.length - 1].precio : 65000;
+    const entryPrice = 65142.20;
+    const stopLoss = 64842.20;
+    const pnl = (lastPrice - entryPrice) * 0.0155;
+    
+    const riskAmount = 300.0;
+    const rActive = pnl / riskAmount;
+    const rDistance = (lastPrice - stopLoss) / (entryPrice - stopLoss) - 1.0;
+
+    return {
+      position: {
+        id: 71,
+        symbol: 'BTCUSDT',
+        side: 'LONG',
+        entryPrice,
+        markPrice: lastPrice,
+        size: 0.0155,
+        leverage: 10,
+        pnl: Math.round(pnl * 100) / 100,
+        stopLoss,
+        takeProfit: null,
+        rActive: Math.round(rActive * 100) / 100,
+        rDistance: Math.round(rDistance * 100) / 100,
+        pnlType: 'MARK_TO_MARKET'
+      },
+      isMocked: true
+    };
+  }
+};
+
+/**
+ * Obtiene el historial de trades desde el VPS.
+ */
+export const getTrades = async (): Promise<{ trades: TradeData[]; isMocked: boolean }> => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/trades`, {
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' }
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+    const rawData = await response.json();
+    const rawTrades: any[] = rawData.trades || [];
+
+    const trades: TradeData[] = rawTrades.map((raw) => ({
+      id: Number(raw.id),
+      timestamp: String(raw.timestamp || raw.time || new Date().toISOString()),
+      side: (raw.side || raw.tipo) as 'LONG' | 'SHORT',
+      entryPrice: Number(raw.entry_price || raw.entryPrice || 0),
+      rMultiple: Number(raw.r_multiple ?? raw.rMultiple ?? 0),
+      pnl: Number(raw.pnl ?? raw.pnl_realizado ?? 0)
+    }));
+
+    return { trades, isMocked: false };
+  } catch (error) {
+    console.warn('Fallo al obtener trades del VPS. Usando mock.', error);
+    
+    const now = new Date();
+    const mockTrades: TradeData[] = [
+      { id: 71, timestamp: new Date(now.getTime() - 300000).toISOString(), side: 'LONG', entryPrice: 65142.20, rMultiple: -0.05, pnl: -0.30 },
+      { id: 70, timestamp: new Date(now.getTime() - 900000).toISOString(), side: 'LONG', entryPrice: 65074.5, rMultiple: 0.01, pnl: 3.25 },
+      { id: 69, timestamp: new Date(now.getTime() - 1800000).toISOString(), side: 'LONG', entryPrice: 64915.0, rMultiple: 0.01, pnl: 3.10 },
+      { id: 68, timestamp: new Date(now.getTime() - 3600000).toISOString(), side: 'LONG', entryPrice: 64200.0, rMultiple: 0.04, pnl: 13.40 },
+      { id: 67, timestamp: new Date(now.getTime() - 7200000).toISOString(), side: 'SHORT', entryPrice: 64510.2, rMultiple: -0.05, pnl: -15.00 },
+      { id: 66, timestamp: new Date(now.getTime() - 14400000).toISOString(), side: 'LONG', entryPrice: 63980.0, rMultiple: 2.10, pnl: 630.00 },
+      { id: 65, timestamp: new Date(now.getTime() - 28800000).toISOString(), side: 'SHORT', entryPrice: 64120.0, rMultiple: -1.00, pnl: -300.00 }
+    ];
+
+    return { trades: mockTrades, isMocked: true };
   }
 };
 

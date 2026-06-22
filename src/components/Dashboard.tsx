@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getTelemetria, API_BASE_URL, getPoc, getAlertas, getConfig, saveConfig, getRadar, getExecutorStatus } from '../services/api';
-import type { TelemetriaRegistro, PocData, SystemAlert, SystemConfig, RadarData, ExecutorStatus, ModoSistema } from '../types';
+import { getTelemetria, API_BASE_URL, getPoc, getAlertas, getConfig, saveConfig, getRadar, getExecutorStatus, getPosition, getTrades } from '../services/api';
+import type { TelemetriaRegistro, PocData, SystemAlert, SystemConfig, RadarData, ExecutorStatus, ModoSistema, PositionData, TradeData } from '../types';
 import { ExecutorStatusWidget } from './ExecutorStatusWidget';
+import { PositionManagementPanel } from './PositionManagementPanel';
+import { RMultiplesHistory } from './RMultiplesHistory';
 import { KPICard } from './KPICard';
 import { CvdChart } from './CvdChart';
 import { LiquidationsChart } from './LiquidationsChart';
@@ -31,6 +33,9 @@ export const Dashboard: React.FC = () => {
   const [isAlertsMocked, setIsAlertsMocked] = useState<boolean>(false);
   const [radarData, setRadarData] = useState<RadarData | null>(null);
   const [executorStatus, setExecutorStatus] = useState<ExecutorStatus | null>(null);
+  const [position, setPosition] = useState<PositionData | null>(null);
+  const [trades, setTrades] = useState<TradeData[]>([]);
+  const [isTradesLoading, setIsTradesLoading] = useState<boolean>(true);
 
   // Estados de configuración de calibración
   const [config, setConfig] = useState<SystemConfig>({
@@ -92,12 +97,14 @@ export const Dashboard: React.FC = () => {
   const fetchData = useCallback(async (isManual = false) => {
     if (isManual) setIsRefreshing(true);
     try {
-      const [result, pocResult, alertsResult, radarResult, executorResult] = await Promise.all([
+      const [result, pocResult, alertsResult, radarResult, executorResult, positionResult, tradesResult] = await Promise.all([
         getTelemetria(limit),
         getPoc(),
         getAlertas(25),
         getRadar(),
-        getExecutorStatus()
+        getExecutorStatus(),
+        getPosition(),
+        getTrades()
       ]);
       
       // Ordenar datos cronológicamente (antiguo a nuevo) para que los gráficos rendericen correctamente de izquierda a derecha
@@ -111,7 +118,18 @@ export const Dashboard: React.FC = () => {
       setIsAlertsMocked(alertsResult.isMocked);
       setRadarData(radarResult.radar);
       setExecutorStatus(executorResult.status);
-      setIsMocked(result.isMocked || pocResult.isMocked || alertsResult.isMocked || radarResult.isMocked || executorResult.isMocked);
+      setPosition(positionResult.position);
+      setTrades(tradesResult.trades);
+      setIsTradesLoading(false);
+      setIsMocked(
+        result.isMocked || 
+        pocResult.isMocked || 
+        alertsResult.isMocked || 
+        radarResult.isMocked || 
+        executorResult.isMocked || 
+        positionResult.isMocked || 
+        tradesResult.isMocked
+      );
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Error fetching telemetría en Dashboard:', err);
@@ -432,6 +450,12 @@ export const Dashboard: React.FC = () => {
                 isSaving={isSavingConfig}
               />
               
+              {/* Active Position Management Panel */}
+              <PositionManagementPanel
+                position={position}
+                isLoading={isLoading}
+              />
+              
               {/* Radar de Confirmación Algorítmica */}
               <ConfirmationRadar
                 radarData={radarData}
@@ -449,6 +473,12 @@ export const Dashboard: React.FC = () => {
             </div>
 
           </div>
+
+          {/* R-Results Financial Auditor Table */}
+          <RMultiplesHistory
+            trades={trades}
+            isLoading={isTradesLoading}
+          />
         </div>
       </main>
 
