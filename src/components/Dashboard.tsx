@@ -250,19 +250,19 @@ export const Dashboard: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             {/* Logo o Icono del Sistema */}
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-cyan to-purple-600 flex items-center justify-center font-mono text-xs font-black text-black select-none shadow-lg shadow-brand-cyan/10">
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-cyan to-purple-600 flex items-center justify-center font-orbitron text-xs font-black text-black select-none shadow-lg shadow-brand-cyan/10">
               TS
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-sm font-black tracking-wider text-white font-mono uppercase">
+                <h1 className="text-sm font-black tracking-wider text-white font-orbitron uppercase">
                   TraderSuko
                 </h1>
                 <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono tracking-widest">
                   V1.2
                 </span>
               </div>
-              <p className="text-[9px] text-slate-500 font-mono font-medium tracking-wide">
+              <p className="text-[9px] text-slate-500 font-orbitron font-medium tracking-wide">
                 TRADERSUKO PRO QUANT TERMINAL
               </p>
             </div>
