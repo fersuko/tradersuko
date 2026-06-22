@@ -127,7 +127,7 @@ export const RMultiplesHistory: React.FC<RMultiplesHistoryProps> = ({
                         {trade.side === 'LONG' ? 'L' : 'S'}
                       </span>
                     </td>
-                    <td className="px-4 py-2 border-r border-slate-900 font-bold">${trade.entryPrice.toLocaleString(undefined, { minimumFractionDigits: 1 })}</td>
+                    <td className="px-4 py-2 border-r border-slate-900 font-bold">${trade.entryPrice.toLocaleString('en-US', { minimumFractionDigits: 1 })}</td>
                     <td className="px-4 py-2 border-r border-slate-900 text-center font-black">
                       <span className={isWin ? 'text-brand-green' : 'text-brand-red'}>
                         {trade.rMultiple >= 0 ? '+' : ''}{trade.rMultiple.toFixed(2)}R
@@ -135,7 +135,7 @@ export const RMultiplesHistory: React.FC<RMultiplesHistoryProps> = ({
                     </td>
                     <td className="px-4 py-2 text-right font-black">
                       <span className={isWin ? 'text-brand-green' : 'text-brand-red'}>
-                        {isWin ? '+' : ''}${trade.pnl.toLocaleString(undefined, { minimumFractionDigits: 1 })}
+                        {isWin ? '+' : ''}${trade.pnl.toLocaleString('en-US', { minimumFractionDigits: 1 })}
                       </span>
                     </td>
                   </tr>

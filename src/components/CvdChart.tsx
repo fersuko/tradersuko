@@ -37,11 +37,11 @@ export const CvdChart: React.FC<CvdChartProps> = ({ data, isLoading, pocPrice })
     if (Math.abs(value) >= 1000000) {
       return `${(value / 1000000).toFixed(2)}M`;
     }
-    return value.toLocaleString();
+    return value.toLocaleString('en-US');
   };
 
   const formatPrice = (value: number) => {
-    return `$${value.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
+    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
   };
 
   const CustomTooltip = ({ active, payload }: any) => {
@@ -68,7 +68,7 @@ export const CvdChart: React.FC<CvdChartProps> = ({ data, isLoading, pocPrice })
                 CVD Binance:
               </span>
               <span className={`font-bold ${record.cvd_binance >= 0 ? 'text-brand-green' : 'text-brand-red'}`}>
-                {record.cvd_binance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                {record.cvd_binance.toLocaleString('en-US', { maximumFractionDigits: 2 })}
               </span>
             </div>
             <div className="flex items-center justify-between gap-8">
@@ -163,7 +163,7 @@ export const CvdChart: React.FC<CvdChartProps> = ({ data, isLoading, pocPrice })
             <YAxis
               yAxisId="left"
               domain={[minPrice, maxPrice]}
-              tickFormatter={(v) => `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+              tickFormatter={(v) => `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`}
               stroke="#475569"
               fontSize={10}
               tickLine={false}
@@ -217,7 +217,7 @@ export const CvdChart: React.FC<CvdChartProps> = ({ data, isLoading, pocPrice })
                 strokeWidth={1}
                 strokeDasharray="4 4"
                 label={{
-                  value: `POC INSTITUCIONAL: $${pocPrice.toLocaleString()}`,
+                  value: `POC INSTITUCIONAL: $${pocPrice.toLocaleString('en-US')}`,
                   fill: '#f59e0b',
                   fontSize: 9,
                   fontWeight: 'bold',

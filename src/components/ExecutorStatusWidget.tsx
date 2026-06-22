@@ -182,7 +182,7 @@ export const ExecutorStatusWidget: React.FC<ExecutorStatusWidgetProps> = ({
                     {ultimoTrade.tipo || 'DESCONOCIDO'}
                   </span>
                   <span className="text-white font-bold">
-                    {ultimoTrade.precio && !isNaN(ultimoTrade.precio) ? `$${ultimoTrade.precio.toLocaleString()}` : '---'}
+                    {ultimoTrade.precio && !isNaN(ultimoTrade.precio) ? `$${ultimoTrade.precio.toLocaleString('en-US')}` : '---'}
                   </span>
                 </div>
                 {ultimoTrade.mensaje && <span className="text-[10px] text-slate-500 font-normal">{ultimoTrade.mensaje}</span>}

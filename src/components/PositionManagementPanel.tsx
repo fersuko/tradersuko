@@ -101,7 +101,7 @@ export const PositionManagementPanel: React.FC<PositionManagementPanelProps> = (
             <span className="text-[9px] text-slate-500 uppercase">PNL ABIERTO</span>
             <div className="flex items-baseline gap-1.5">
               <span className={`text-lg font-black tracking-tight ${isPnlPositive ? 'text-brand-green' : 'text-brand-red'}`}>
-                {isPnlPositive ? '+' : ''}${pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {isPnlPositive ? '+' : ''}${pnl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               <span className={`text-[10px] font-bold ${isPnlPositive ? 'text-brand-green' : 'text-brand-red'}`}>
                 ({isPnlPositive ? '+' : ''}{pnlPercent.toFixed(2)}%)
@@ -112,11 +112,11 @@ export const PositionManagementPanel: React.FC<PositionManagementPanelProps> = (
           <div className="flex flex-col gap-1.5 text-[10px] mt-3 pt-2.5 border-t border-slate-900/60">
             <div className="flex justify-between">
               <span className="text-slate-500">Entry Price:</span>
-              <span className="text-white font-bold">${entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <span className="text-white font-bold">${entryPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500">Mark Price:</span>
-              <span className="text-slate-300">${markPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              <span className="text-slate-300">${markPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-500">Position Size:</span>
@@ -166,12 +166,12 @@ export const PositionManagementPanel: React.FC<PositionManagementPanelProps> = (
       <div className="mt-4 pt-3 border-t border-slate-900/60 grid grid-cols-2 gap-4 font-mono text-[9px]">
         <div className="flex items-center justify-between bg-slate-950/30 px-2 py-1.5 rounded border border-slate-900/80">
           <span className="text-slate-500">STOP LOSS (SL):</span>
-          <span className="text-brand-red font-black">${stopLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+          <span className="text-brand-red font-black">${stopLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
         </div>
         <div className="flex items-center justify-between bg-slate-950/30 px-2 py-1.5 rounded border border-slate-900/80">
           <span className="text-slate-500">TAKE PROFIT (TP):</span>
           <span className="text-brand-green font-black">
-            {takeProfit ? `$${takeProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : 'N/A'}
+            {takeProfit ? `$${takeProfit.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : 'N/A'}
           </span>
         </div>
       </div>

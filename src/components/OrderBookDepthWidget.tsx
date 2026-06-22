@@ -53,19 +53,19 @@ export const OrderBookDepthWidget: React.FC<OrderBookDepthWidgetProps> = ({ late
           <div className="flex flex-col">
             <span className="text-[10px] text-slate-500">BIDS (MURO COMPRA)</span>
             <span className="text-brand-green font-bold text-sm text-glow-green">
-              {bids.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M
+              {bids.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M
             </span>
           </div>
           <div className="text-center bg-slate-950 px-2 py-1 rounded border border-slate-900">
             <span className="text-[9px] text-slate-500 block">DIFERENCIAL</span>
             <span className={`text-xs font-bold ${isBidsDominant ? 'text-brand-green' : 'text-brand-red'}`}>
-              {isBidsDominant ? '+' : ''}{(bids - asks).toLocaleString(undefined, { maximumFractionDigits: 1 })}M
+              {isBidsDominant ? '+' : ''}{(bids - asks).toLocaleString('en-US', { maximumFractionDigits: 1 })}M
             </span>
           </div>
           <div className="flex flex-col items-end">
             <span className="text-[10px] text-slate-500">ASKS (MURO VENTA)</span>
             <span className="text-brand-red font-bold text-sm text-glow-red">
-              {asks.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M
+              {asks.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M
             </span>
           </div>
         </div>

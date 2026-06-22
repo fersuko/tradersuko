@@ -183,7 +183,7 @@ export const Dashboard: React.FC = () => {
     const precioChange = ultimoPrecio - previous.precio;
     const precioChangePct = previous.precio !== 0 ? (precioChange / previous.precio) * 100 : 0;
     const precioChangeType = precioChangePct > 0 ? 'up' as const : precioChangePct < 0 ? 'down' as const : 'neutral' as const;
-    const precioSubtext = `Ref: ${previous.precio.toLocaleString()}`;
+    const precioSubtext = `Ref: ${previous.precio.toLocaleString('en-US')}`;
 
     // 2. CVD
     const ultimoCvd = latest.cvd_binance;
@@ -369,7 +369,7 @@ export const Dashboard: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           <KPICard
             title="Último Precio BTC"
-            value={metrics.ultimoPrecio ? `$${metrics.ultimoPrecio.toLocaleString(undefined, { minimumFractionDigits: 1 })}` : '---'}
+            value={metrics.ultimoPrecio ? `$${metrics.ultimoPrecio.toLocaleString('en-US', { minimumFractionDigits: 1 })}` : '---'}
             subValue={metrics.precioSubtext}
             change={metrics.precioChange}
             changeType={metrics.precioChangeType}
@@ -378,7 +378,7 @@ export const Dashboard: React.FC = () => {
           />
           <KPICard
             title="CVD Binance Acumulado"
-            value={metrics.ultimoCvd ? metrics.ultimoCvd.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '---'}
+            value={metrics.ultimoCvd ? metrics.ultimoCvd.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '---'}
             subValue={metrics.cvdSubtext}
             change={metrics.cvdDelta}
             changeType={metrics.cvdChangeType}

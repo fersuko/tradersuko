@@ -89,8 +89,8 @@ export const KPICard: React.FC<KPICardProps> = ({
                   ) : null}
                   {changeType === 'up' && '+'}
                   {change > 1000 || change < -1000 
-                    ? change.toLocaleString(undefined, { maximumFractionDigits: 0 }) 
-                    : change.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ? change.toLocaleString('en-US', { maximumFractionDigits: 0 }) 
+                    : change.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   {icon === 'pressure' ? '%' : icon === 'speed' ? ' tps' : ''}
                 </span>
               )}

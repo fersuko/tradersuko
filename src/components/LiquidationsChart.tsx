@@ -66,7 +66,7 @@ export const LiquidationsChart: React.FC<LiquidationsChartProps> = ({
                 Liquidaciones Longs (Ventas):
               </span>
               <span className="font-bold">
-                ${record.liquidaciones_longs.toLocaleString()}
+                ${record.liquidaciones_longs.toLocaleString('en-US')}
               </span>
             </div>
             <div className="flex items-center justify-between gap-8 text-brand-green">
@@ -75,13 +75,13 @@ export const LiquidationsChart: React.FC<LiquidationsChartProps> = ({
                 Liquidaciones Shorts (Compras):
               </span>
               <span className="font-bold">
-                ${record.liquidaciones_shorts.toLocaleString()}
+                ${record.liquidaciones_shorts.toLocaleString('en-US')}
               </span>
             </div>
             <div className="border-t border-slate-800 my-1 pt-1 flex items-center justify-between gap-8 text-white">
               <span className="font-sans text-slate-300">Total Liquidado:</span>
               <span className="font-bold">
-                ${totalLiq.toLocaleString()}
+                ${totalLiq.toLocaleString('en-US')}
               </span>
             </div>
           </div>
@@ -175,12 +175,12 @@ export const LiquidationsChart: React.FC<LiquidationsChartProps> = ({
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-red" />
               <span className="text-slate-400">LONGS LIQ:</span>
-              <span className="text-brand-red font-bold">${totalLongsLiq.toLocaleString()}</span>
+              <span className="text-brand-red font-bold">${totalLongsLiq.toLocaleString('en-US')}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-green" />
               <span className="text-slate-400">SHORTS LIQ:</span>
-              <span className="text-brand-green font-bold">${totalShortsLiq.toLocaleString()}</span>
+              <span className="text-brand-green font-bold">${totalShortsLiq.toLocaleString('en-US')}</span>
             </div>
           </div>
           <span className="text-[9px] text-slate-500">
