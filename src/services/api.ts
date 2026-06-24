@@ -578,7 +578,7 @@ export const getExecutorStatus = async (): Promise<{ status: ExecutorStatus; isM
         ultimaSenal: mockSenal,
         ultimoInicio: {
           timestamp: new Date(now.getTime() - 86400000).toISOString(),
-          version: '1.2.0'
+          version: '1.3.0'
         }
       },
       isMocked: true
