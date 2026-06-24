@@ -512,6 +512,18 @@ export const getExecutorStatus = async (): Promise<{ status: ExecutorStatus; isM
         bloqueado: Boolean(raw.circuit_breaker.bloqueado),
         disponibles: Number(raw.circuit_breaker.disponibles)
       },
+      tradesActivos: Number(raw.trades_activos || 0),
+      tradesActivosLista: (raw.trades_activos_lista || []).map((t: any) => ({
+        id: Number(t.id),
+        lado: String(t.lado),
+        precio_entrada: Number(t.precio_entrada),
+        cantidad_btc: Number(t.cantidad_btc),
+        stop_loss: Number(t.stop_loss),
+        take_profit: Number(t.take_profit),
+        edad_horas: Number(t.edad_horas),
+        timestamp: String(t.timestamp)
+      })),
+      pnlDia: Number(raw.pnl_dia || 0),
       ultimoTrade: raw.ultimo_trade ? {
         timestamp: String(raw.ultimo_trade.timestamp || new Date().toISOString()),
         tipo: String(raw.ultimo_trade.tipo || raw.ultimo_trade.side || raw.ultimo_trade.tipo_orden || 'TRADE'),
@@ -559,6 +571,9 @@ export const getExecutorStatus = async (): Promise<{ status: ExecutorStatus; isM
           bloqueado: false,
           disponibles: 3
         },
+        tradesActivos: 0,
+        tradesActivosLista: [],
+        pnlDia: 0,
         ultimoTrade: mockTrade,
         ultimaSenal: mockSenal,
         ultimoInicio: {
@@ -673,8 +688,13 @@ export const getTrades = async (): Promise<{ trades: TradeData[]; isMocked: bool
       timestamp: String(raw.timestamp || raw.time || new Date().toISOString()),
       side: (raw.side || raw.tipo) as 'LONG' | 'SHORT',
       entryPrice: Number(raw.entry_price || raw.entryPrice || 0),
+      exitPrice: raw.exit_price != null ? Number(raw.exit_price) : null,
       rMultiple: Number(raw.r_multiple ?? raw.rMultiple ?? 0),
-      pnl: Number(raw.pnl ?? raw.pnl_realizado ?? 0)
+      pnl: Number(raw.pnl ?? raw.pnl_realizado ?? 0),
+      estado: String(raw.estado || raw.status || ''),
+      modo: String(raw.modo || raw.mode || ''),
+      amountBtc: Number(raw.amount_btc || raw.amountBtc || raw.cantidad_btc || 0),
+      apalancamiento: Number(raw.apalancamiento || raw.leverage || 0)
     }));
 
     return { trades, isMocked: false };
@@ -683,13 +703,13 @@ export const getTrades = async (): Promise<{ trades: TradeData[]; isMocked: bool
     
     const now = new Date();
     const mockTrades: TradeData[] = [
-      { id: 71, timestamp: new Date(now.getTime() - 300000).toISOString(), side: 'LONG', entryPrice: 65142.20, rMultiple: -0.05, pnl: -0.30 },
-      { id: 70, timestamp: new Date(now.getTime() - 900000).toISOString(), side: 'LONG', entryPrice: 65074.5, rMultiple: 0.01, pnl: 3.25 },
-      { id: 69, timestamp: new Date(now.getTime() - 1800000).toISOString(), side: 'LONG', entryPrice: 64915.0, rMultiple: 0.01, pnl: 3.10 },
-      { id: 68, timestamp: new Date(now.getTime() - 3600000).toISOString(), side: 'LONG', entryPrice: 64200.0, rMultiple: 0.04, pnl: 13.40 },
-      { id: 67, timestamp: new Date(now.getTime() - 7200000).toISOString(), side: 'SHORT', entryPrice: 64510.2, rMultiple: -0.05, pnl: -15.00 },
-      { id: 66, timestamp: new Date(now.getTime() - 14400000).toISOString(), side: 'LONG', entryPrice: 63980.0, rMultiple: 2.10, pnl: 630.00 },
-      { id: 65, timestamp: new Date(now.getTime() - 28800000).toISOString(), side: 'SHORT', entryPrice: 64120.0, rMultiple: -1.00, pnl: -300.00 }
+      { id: 71, timestamp: new Date(now.getTime() - 300000).toISOString(), side: 'LONG', entryPrice: 65142.20, exitPrice: null, rMultiple: -0.05, pnl: -0.30, estado: 'SIMULADO', modo: 'SIMULACION', amountBtc: 0.01, apalancamiento: 10 },
+      { id: 70, timestamp: new Date(now.getTime() - 900000).toISOString(), side: 'LONG', entryPrice: 65074.5, exitPrice: null, rMultiple: 0.01, pnl: 3.25, estado: 'SIMULADO', modo: 'SIMULACION', amountBtc: 0.015, apalancamiento: 10 },
+      { id: 69, timestamp: new Date(now.getTime() - 1800000).toISOString(), side: 'LONG', entryPrice: 64915.0, exitPrice: null, rMultiple: 0.01, pnl: 3.10, estado: 'SIMULADO', modo: 'SIMULACION', amountBtc: 0.02, apalancamiento: 10 },
+      { id: 68, timestamp: new Date(now.getTime() - 3600000).toISOString(), side: 'LONG', entryPrice: 64200.0, exitPrice: null, rMultiple: 0.04, pnl: 13.40, estado: 'CLOSED', modo: 'SIMULACION', amountBtc: 0.02, apalancamiento: 10 },
+      { id: 67, timestamp: new Date(now.getTime() - 7200000).toISOString(), side: 'SHORT', entryPrice: 64510.2, exitPrice: null, rMultiple: -0.05, pnl: -15.00, estado: 'CLOSED', modo: 'SIMULACION', amountBtc: 0.015, apalancamiento: 10 },
+      { id: 66, timestamp: new Date(now.getTime() - 14400000).toISOString(), side: 'LONG', entryPrice: 63980.0, exitPrice: null, rMultiple: 2.10, pnl: 630.00, estado: 'CLOSED', modo: 'SIMULACION', amountBtc: 0.03, apalancamiento: 10 },
+      { id: 65, timestamp: new Date(now.getTime() - 28800000).toISOString(), side: 'SHORT', entryPrice: 64120.0, exitPrice: null, rMultiple: -1.00, pnl: -300.00, estado: 'CLOSED', modo: 'SIMULACION', amountBtc: 0.025, apalancamiento: 10 }
     ];
 
     return { trades: mockTrades, isMocked: true };

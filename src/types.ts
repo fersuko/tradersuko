@@ -28,6 +28,17 @@ export interface SystemConfig {
   modoSistema: ModoSistema;
 }
 
+export interface ActiveTradeDetail {
+  id: number;
+  lado: string;
+  precio_entrada: number;
+  cantidad_btc: number;
+  stop_loss: number;
+  take_profit: number;
+  edad_horas: number;
+  timestamp: string;
+}
+
 export interface ExecutorStatus {
   modo: ModoSistema;
   keys: {
@@ -39,6 +50,9 @@ export interface ExecutorStatus {
     bloqueado: boolean;
     disponibles: number;
   };
+  tradesActivos: number;
+  tradesActivosLista: ActiveTradeDetail[];
+  pnlDia: number;
   ultimoTrade: {
     timestamp: string;
     tipo: string;
@@ -101,8 +115,13 @@ export interface TradeData {
   timestamp: string;
   side: 'LONG' | 'SHORT';
   entryPrice: number;
+  exitPrice: number | null;
   rMultiple: number;
   pnl: number;
+  estado: string;
+  modo: string;
+  amountBtc: number;
+  apalancamiento: number;
 }
 
 

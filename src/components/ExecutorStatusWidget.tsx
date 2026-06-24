@@ -1,6 +1,6 @@
 import React from 'react';
-import type { ExecutorStatus, ModoSistema } from '../types';
-import { Cpu, ShieldCheck, Key, Play, AlertTriangle, RefreshCw } from 'lucide-react';
+import type { ExecutorStatus, ModoSistema, ActiveTradeDetail } from '../types';
+import { Cpu, ShieldCheck, Key, Play, AlertTriangle, RefreshCw, Clock, TrendingUp, TrendingDown } from 'lucide-react';
 
 interface ExecutorStatusWidgetProps {
   status: ExecutorStatus | null;
@@ -24,7 +24,7 @@ export const ExecutorStatusWidget: React.FC<ExecutorStatusWidgetProps> = ({
     );
   }
 
-  const { modo, keys, tradesHoy, circuitBreaker, ultimoTrade, ultimaSenal } = status;
+  const { modo, keys, tradesHoy, circuitBreaker, ultimoTrade, ultimaSenal, tradesActivos, tradesActivosLista, pnlDia } = status;
 
   // Barra de progreso retro en caracteres block
   const maxTrades = circuitBreaker.disponibles || 3;
@@ -45,6 +45,11 @@ export const ExecutorStatusWidget: React.FC<ExecutorStatusWidgetProps> = ({
     } catch {
       return '';
     }
+  };
+
+  const formatHoras = (horas: number) => {
+    if (horas < 1) return `${Math.round(horas * 60)}m`;
+    return `${horas.toFixed(1)}h`;
   };
 
   return (
@@ -114,7 +119,64 @@ export const ExecutorStatusWidget: React.FC<ExecutorStatusWidgetProps> = ({
           </div>
         </div>
 
-        {/* 3. Trades Ejecutados hoy */}
+        {/* 3. SUMMARY BAR: Trades Activos + Trades Hoy + P&L Día */}
+        <div className="grid grid-cols-3 gap-2 border-t border-slate-900/60 pt-2.5">
+          {/* Trades Activos */}
+          <div className="bg-slate-950/50 rounded-lg p-2 text-center border border-slate-900">
+            <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Activos</div>
+            <div className={`text-sm font-black ${tradesActivos > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
+              {tradesActivos}
+            </div>
+          </div>
+          {/* Trades Hoy */}
+          <div className="bg-slate-950/50 rounded-lg p-2 text-center border border-slate-900">
+            <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Hoy</div>
+            <div className="text-sm font-black text-brand-cyan">{tradesHoy}/{maxTrades}</div>
+          </div>
+          {/* P&L Día */}
+          <div className="bg-slate-950/50 rounded-lg p-2 text-center border border-slate-900">
+            <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">P&L Día</div>
+            <div className={`text-sm font-black flex items-center justify-center gap-1 ${
+              pnlDia > 0 ? 'text-brand-green' : pnlDia < 0 ? 'text-brand-red' : 'text-slate-600'
+            }`}>
+              {pnlDia > 0 ? <TrendingUp className="w-3 h-3" /> : pnlDia < 0 ? <TrendingDown className="w-3 h-3" /> : null}
+              ${pnlDia.toFixed(2)}
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Active Trades List (if any) */}
+        {tradesActivosLista.length > 0 && (
+          <div className="border-t border-slate-900/60 pt-2.5">
+            <div className="text-[9px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              TRADES ACTIVOS
+            </div>
+            <div className="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto">
+              {tradesActivosLista.map((trade: ActiveTradeDetail) => (
+                <div key={trade.id} className="bg-slate-950/60 rounded-lg p-2 border border-slate-900 text-[10px]">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`font-black ${trade.lado === 'LONG' ? 'text-brand-green' : 'text-brand-red'}`}>
+                        #{trade.id} {trade.lado}
+                      </span>
+                      <span className="text-slate-500">|</span>
+                      <span className="text-slate-400">{formatHoras(trade.edad_horas)}</span>
+                    </div>
+                    <span className="text-white font-bold">${trade.precio_entrada.toLocaleString('en-US')}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-500">
+                    <span>SL: <span className="text-brand-red/80">${trade.stop_loss.toLocaleString('en-US')}</span></span>
+                    <span>TP: <span className="text-brand-green/80">{trade.take_profit > 0 ? `$${trade.take_profit.toLocaleString('en-US')}` : '---'}</span></span>
+                    <span>{trade.cantidad_btc.toFixed(4)} BTC</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 5. Trades Ejecutados hoy */}
         <div className="flex items-center justify-between border-t border-slate-900/60 pt-2.5">
           <span className="text-slate-400">Trades Hoy:</span>
           <div className="flex items-center gap-2">
@@ -127,7 +189,7 @@ export const ExecutorStatusWidget: React.FC<ExecutorStatusWidgetProps> = ({
           </div>
         </div>
 
-        {/* 4. Circuit Breaker */}
+        {/* 6. Circuit Breaker */}
         <div className="flex items-center justify-between border-t border-slate-900/60 pt-2.5">
           <span className="text-slate-400">Circuit Breaker:</span>
           <span className={`flex items-center gap-1 font-bold text-[10px] px-2 py-0.5 rounded ${
@@ -149,7 +211,7 @@ export const ExecutorStatusWidget: React.FC<ExecutorStatusWidgetProps> = ({
           </span>
         </div>
 
-        {/* 5. Última señal */}
+        {/* 7. Última señal */}
         <div className="flex flex-col gap-1 border-t border-slate-900/60 pt-2.5">
           <div className="flex justify-between text-slate-500 text-[10px]">
             <span>ÚLTIMA SEÑAL RECIBIDA</span>
@@ -168,7 +230,7 @@ export const ExecutorStatusWidget: React.FC<ExecutorStatusWidgetProps> = ({
           </div>
         </div>
 
-        {/* 6. Último trade ejecutado */}
+        {/* 8. Último trade ejecutado */}
         <div className="flex flex-col gap-1 border-t border-slate-900/60 pt-2.5">
           <div className="flex justify-between text-slate-500 text-[10px]">
             <span>ÚLTIMA EJECUCIÓN DIRECTA</span>

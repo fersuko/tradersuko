@@ -11,6 +11,8 @@ import { ConfigCard } from './ConfigCard';
 import { OrderBookDepthWidget } from './OrderBookDepthWidget';
 import { AlertsLog } from './AlertsLog';
 import { ConfirmationRadar } from './ConfirmationRadar';
+import { MarketClocks } from './MarketClocks';
+import { TradesChart } from './TradesChart';
 import { 
   Wifi, 
   WifiOff, 
@@ -323,6 +325,13 @@ export const Dashboard: React.FC = () => {
         </div>
       </header>
 
+      {/* 1.5. Market Clocks Globales */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full -mt-4">
+        <div className="p-3 rounded-xl border border-slate-800/40 bg-slate-950/40 backdrop-blur-sm">
+          <MarketClocks />
+        </div>
+      </div>
+
       {/* 2. Main Content */}
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex flex-col gap-6">
         
@@ -402,6 +411,15 @@ export const Dashboard: React.FC = () => {
             changeType={metrics.velocidadTps > 100 ? 'up' as const : 'neutral' as const}
             icon="speed"
             isLoading={isLoading}
+          />
+        </div>
+
+        {/* 4.5. Gráfica de Trades sobre Precio */}
+        <div className="w-full rounded-xl border border-slate-800/60 bg-slate-950/40 backdrop-blur-sm">
+          <TradesChart 
+            telemetria={data} 
+            trades={trades} 
+            isLoading={isLoading || isTradesLoading}
           />
         </div>
 
