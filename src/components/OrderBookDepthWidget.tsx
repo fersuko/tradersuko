@@ -10,8 +10,8 @@ interface OrderBookDepthWidgetProps {
 export const OrderBookDepthWidget: React.FC<OrderBookDepthWidgetProps> = ({ latestRecord, isLoading }) => {
   if (isLoading || !latestRecord) {
     return (
-      <div className="glass-panel rounded-xl p-5 flex flex-col justify-center items-center h-[160px]">
-        <div className="w-6 h-6 border-2 border-brand-cyan border-t-transparent rounded-full animate-spin mb-2" />
+      <div className="glass-panel rounded-xl p-4 flex flex-col justify-center items-center h-full min-h-[160px] border border-slate-800">
+        <div className="w-5 h-5 border-2 border-brand-cyan border-t-transparent rounded-full animate-spin mb-1" />
         <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">Cargando Muros...</span>
       </div>
     );
@@ -34,88 +34,79 @@ export const OrderBookDepthWidget: React.FC<OrderBookDepthWidgetProps> = ({ late
   const isSafe = ratio >= 1.5;
 
   return (
-    <div className="glass-panel rounded-xl p-5 border border-slate-800 transition-all duration-300">
+    <div className="glass-panel rounded-xl p-4 border border-slate-800 transition-all duration-300 h-full">
       {/* Cabecera */}
-      <div className="flex items-center gap-2 mb-4 border-b border-slate-900 pb-3">
-        <Layers className="w-4 h-4 text-brand-cyan text-glow-cyan" />
-        <h4 className="text-sm font-bold text-white tracking-wide uppercase font-mono flex-1">
-          Muros Institucionales (OB Depth 1%)
+      <div className="flex items-center gap-2 mb-3 border-b border-slate-900 pb-2">
+        <Layers className="w-3.5 h-3.5 text-brand-cyan text-glow-cyan" />
+        <h4 className="text-xs font-bold text-white tracking-wide uppercase font-mono flex-1">
+          Muros Institucionales
         </h4>
-        <span className="text-[9px] font-mono text-slate-500 font-bold">
-          LIVE TELEMETRY
+        <span className="text-[8px] font-mono text-slate-500 font-bold">
+          OB 1%
         </span>
       </div>
 
       {/* Visualizador de Barras de Muros */}
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
         {/* Leyenda y Datos numéricos */}
-        <div className="flex justify-between items-center text-xs font-mono">
+        <div className="flex justify-between items-center text-[10px] font-mono">
           <div className="flex flex-col">
-            <span className="text-[10px] text-slate-500">BIDS (MURO COMPRA)</span>
-            <span className="text-brand-green font-bold text-sm text-glow-green">
+            <span className="text-[8px] text-slate-500">BIDS</span>
+            <span className="text-brand-green font-bold text-xs text-glow-green">
               {bids.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M
             </span>
           </div>
-          <div className="text-center bg-slate-950 px-2 py-1 rounded border border-slate-900">
-            <span className="text-[9px] text-slate-500 block">DIFERENCIAL</span>
-            <span className={`text-xs font-bold ${isBidsDominant ? 'text-brand-green' : 'text-brand-red'}`}>
+          <div className="text-center bg-slate-950 px-2 py-0.5 rounded border border-slate-900">
+            <span className="text-[8px] text-slate-500 block">DIF</span>
+            <span className={`text-[10px] font-bold ${isBidsDominant ? 'text-brand-green' : 'text-brand-red'}`}>
               {isBidsDominant ? '+' : ''}{(bids - asks).toLocaleString('en-US', { maximumFractionDigits: 1 })}M
             </span>
           </div>
           <div className="flex flex-col items-end">
-            <span className="text-[10px] text-slate-500">ASKS (MURO VENTA)</span>
-            <span className="text-brand-red font-bold text-sm text-glow-red">
+            <span className="text-[8px] text-slate-500">ASKS</span>
+            <span className="text-brand-red font-bold text-xs text-glow-red">
               {asks.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M
             </span>
           </div>
         </div>
 
-        {/* Barra de Progreso Doble de Alto Contraste */}
-        <div className="h-4 w-full bg-slate-950 rounded overflow-hidden flex border border-slate-850 p-0.5">
+        {/* Barra de Progreso Doble */}
+        <div className="h-3 w-full bg-slate-950 rounded overflow-hidden flex border border-slate-850 p-0.5">
           <div
             style={{ width: `${bidsPercent}%` }}
-            className="bg-brand-green/85 hover:bg-brand-green h-full transition-all duration-500 ease-out rounded-l relative"
+            className="bg-brand-green/85 h-full transition-all duration-500 ease-out rounded-l relative"
             title={`Bids: ${bidsPercent.toFixed(1)}%`}
           >
-            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-black text-black font-mono">
+            <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[7px] font-black text-black font-mono">
               {bidsPercent.toFixed(0)}%
             </span>
           </div>
           <div
             style={{ width: `${asksPercent}%` }}
-            className="bg-brand-red/85 hover:bg-brand-red h-full transition-all duration-500 ease-out rounded-r relative"
+            className="bg-brand-red/85 h-full transition-all duration-500 ease-out rounded-r relative"
             title={`Asks: ${asksPercent.toFixed(1)}%`}
           >
-            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-black text-black font-mono">
+            <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[7px] font-black text-black font-mono">
               {asksPercent.toFixed(0)}%
             </span>
           </div>
         </div>
       </div>
 
-      {/* Indicador de Filtro de Muros de Seguridad */}
-      <div className="mt-4 pt-3 border-t border-slate-900">
-        <span className="text-[9px] text-slate-500 font-mono font-bold block mb-1.5">
-          FILTRO DE MUROS DE SEGURIDAD
-        </span>
-
-        {isSafe ? (
-          <div className="p-3 rounded-lg border border-brand-green/20 bg-brand-green/5 text-brand-green flex items-start gap-2.5 text-xs font-mono font-semibold animate-pulse shadow-lg shadow-brand-green/5">
-            <ShieldCheck className="w-4 h-4 text-brand-green shrink-0 mt-0.5 text-glow-green" />
-            <div className="flex-1 leading-normal">
-              <span className="text-white font-bold block text-[10px]">RESPALDADO POR LIQUIDEZ INSTITUCIONAL</span>
-              <span>Trade seguro. Ratio de imbalance actual: {ratio.toFixed(2)}x (mínimo 1.5x)</span>
-            </div>
-          </div>
-        ) : (
-          <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5 text-amber-400 flex items-start gap-2.5 text-xs font-mono font-semibold">
-            <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-            <div className="flex-1 leading-normal">
-              <span className="text-white font-bold block text-[10px]">BLOQUEADO POR FALTA DE LIQUIDEZ INSTITUCIONAL</span>
-              <span>Liquidez neutral/riesgosa. Ratio actual: {ratio.toFixed(2)}x (muro débil)</span>
-            </div>
-          </div>
-        )}
+      {/* Indicador compacto */}
+      <div className="mt-2 pt-2 border-t border-slate-900">
+        <div className={`p-2 rounded-lg border text-[9px] font-mono font-semibold flex items-center gap-1.5 ${
+          isSafe 
+            ? 'border-brand-green/20 bg-brand-green/5 text-brand-green animate-pulse' 
+            : 'border-amber-500/20 bg-amber-500/5 text-amber-400'
+        }`}>
+          {isSafe ? (
+            <ShieldCheck className="w-3 h-3 shrink-0" />
+          ) : (
+            <ShieldAlert className="w-3 h-3 shrink-0" />
+          )}
+          <span>{isSafe ? '✅ Respaldo institucional' : '⚠️ Muro débil'} — Ratio {ratio.toFixed(2)}x</span>
+        </div>
       </div>
     </div>
   );

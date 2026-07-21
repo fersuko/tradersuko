@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getTelemetria, API_BASE_URL, getPoc, getAlertas, getConfig, saveConfig, getRadar, getExecutorStatus, getPosition, getTrades } from '../services/api';
-import type { TelemetriaRegistro, PocData, SystemAlert, SystemConfig, RadarData, ExecutorStatus, ModoSistema, PositionData, TradeData } from '../types';
-import { ExecutorStatusWidget } from './ExecutorStatusWidget';
-import { PositionManagementPanel } from './PositionManagementPanel';
+import type { TelemetriaRegistro, PocData, SystemAlert, SystemConfig, RadarData, ExecutorStatus, PositionData, TradeData } from '../types';
+import { TradingPanel } from './TradingPanel';
 import { RMultiplesHistory } from './RMultiplesHistory';
 import { KPICard } from './KPICard';
 import { CvdChart } from './CvdChart';
@@ -141,10 +140,6 @@ export const Dashboard: React.FC = () => {
     }
   }, [limit]);
 
-  const handleModeChange = useCallback((newMode: ModoSistema) => {
-    setConfig((prev) => ({ ...prev, modoSistema: newMode }));
-  }, []);
-
   // Efecto para el polling de 5 segundos
   useEffect(() => {
     fetchData(); // Carga inicial
@@ -261,7 +256,7 @@ export const Dashboard: React.FC = () => {
                   TraderSuko
                 </h1>
                 <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono tracking-widest">
-                  V1.3
+                  V1.4
                 </span>
               </div>
               <p className="text-[9px] text-slate-500 font-orbitron font-medium tracking-wide">
@@ -346,7 +341,56 @@ export const Dashboard: React.FC = () => {
           </div>
         )}
 
-        {/* 3. Panel de selectores y filtros rápidos */}
+        {/* 4. Grid de KPIs + Radar + Muro (todo informativo) */}
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+          <KPICard
+            title="Último Precio BTC"
+            value={metrics.ultimoPrecio ? `$${metrics.ultimoPrecio.toLocaleString('en-US', { minimumFractionDigits: 1 })}` : '---'}
+            subValue={metrics.precioSubtext}
+            change={metrics.precioChange}
+            changeType={metrics.precioChangeType}
+            icon="price"
+            isLoading={isLoading}
+          />
+          <KPICard
+            title="CVD Binance Acumulado"
+            value={metrics.ultimoCvd ? metrics.ultimoCvd.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '---'}
+            subValue={metrics.cvdSubtext}
+            change={metrics.cvdDelta}
+            changeType={metrics.cvdChangeType}
+            icon="cvd"
+            isLoading={isLoading}
+          />
+          <KPICard
+            title="Presión del Orderbook"
+            value={metrics.ultimoPrecio ? `${metrics.ultimaPresion}%` : '---'}
+            subValue={metrics.presionSubtext}
+            change={parseFloat(metrics.ultimaPresion)}
+            changeType={parseFloat(metrics.ultimaPresion) > 50 ? 'up' as const : parseFloat(metrics.ultimaPresion) < 50 ? 'down' as const : 'neutral' as const}
+            icon="pressure"
+            isLoading={isLoading}
+          />
+          <KPICard
+            title="Velocidad de Cinta (HFT)"
+            value={metrics.ultimoPrecio ? `${metrics.velocidadTps}` : '---'}
+            subValue={metrics.velocidadSubtext}
+            change={metrics.velocidadTps}
+            changeType={metrics.velocidadTps > 100 ? 'up' as const : 'neutral' as const}
+            icon="speed"
+            isLoading={isLoading}
+          />
+          {/* Radar y Muro como cards informativas */}
+          <ConfirmationRadar
+            radarData={radarData}
+            isLoading={isLoading}
+          />
+          <OrderBookDepthWidget 
+            latestRecord={data[data.length - 1]} 
+            isLoading={isLoading} 
+          />
+        </div>
+
+        {/* Panel de configuración de ventana — entre KPIs y gráfico */}
         <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl glass-panel">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-brand-cyan" />
@@ -374,46 +418,6 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* 4. Grid de KPIs */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          <KPICard
-            title="Último Precio BTC"
-            value={metrics.ultimoPrecio ? `$${metrics.ultimoPrecio.toLocaleString('en-US', { minimumFractionDigits: 1 })}` : '---'}
-            subValue={metrics.precioSubtext}
-            change={metrics.precioChange}
-            changeType={metrics.precioChangeType}
-            icon="price"
-            isLoading={isLoading}
-          />
-          <KPICard
-            title="CVD Binance Acumulado"
-            value={metrics.ultimoCvd ? metrics.ultimoCvd.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '---'}
-            subValue={metrics.cvdSubtext}
-            change={metrics.cvdDelta}
-            changeType={metrics.cvdChangeType}
-            icon="cvd"
-            isLoading={isLoading}
-          />
-          <KPICard
-            title="Presión del Orderbook (Instantánea)"
-            value={metrics.ultimoPrecio ? `${metrics.ultimaPresion}%` : '---'}
-            subValue={metrics.presionSubtext}
-            change={parseFloat(metrics.ultimaPresion)}
-            changeType={parseFloat(metrics.ultimaPresion) > 50 ? 'up' as const : parseFloat(metrics.ultimaPresion) < 50 ? 'down' as const : 'neutral' as const}
-            icon="pressure"
-            isLoading={isLoading}
-          />
-          <KPICard
-            title="Velocidad de Cinta (HFT)"
-            value={metrics.ultimoPrecio ? `${metrics.velocidadTps}` : '---'}
-            subValue={metrics.velocidadSubtext}
-            change={metrics.velocidadTps}
-            changeType={metrics.velocidadTps > 100 ? 'up' as const : 'neutral' as const}
-            icon="speed"
-            isLoading={isLoading}
-          />
-        </div>
-
         {/* 4.5. Gráfica de Trades sobre Precio */}
         <div className="w-full rounded-xl border border-slate-800/60 bg-slate-950/40 backdrop-blur-sm">
           <TradesChart 
@@ -423,7 +427,7 @@ export const Dashboard: React.FC = () => {
           />
         </div>
 
-        {/* 5. Área de Gráficos (Gráfico de CVD + Gráfico de Liquidaciones) */}
+        {/* 5. Área de Gráficos + Widgets interactivos */}
         <div className="flex flex-col gap-6">
           <div className="w-full">
             <CvdChart data={data} isLoading={isLoading} pocPrice={pocData?.pocPrecio} />
@@ -434,7 +438,7 @@ export const Dashboard: React.FC = () => {
             {/* Columna Izquierda: Gráfico de Liquidaciones + Terminal de Logs */}
             <div className="lg:col-span-2 flex flex-col gap-6">
               
-              {/* Gráfico de Liquidaciones (con totales inyectados en la base) */}
+              {/* Gráfico de Liquidaciones */}
               <LiquidationsChart 
                 data={data} 
                 isLoading={isLoading} 
@@ -442,7 +446,7 @@ export const Dashboard: React.FC = () => {
                 totalShortsLiq={metrics.totalShortsLiq}
               />
 
-              {/* Bitácora de Logs del Cerebro (Formato Terminal Horizontal) */}
+              {/* Bitácora de Logs */}
               <AlertsLog 
                 alerts={alerts} 
                 isLoading={isLoading} 
@@ -451,36 +455,17 @@ export const Dashboard: React.FC = () => {
               />
             </div>
 
-            {/* Columna Derecha: Muros de Liquidez + Panel de Configuración */}
+            {/* Columna Derecha: Solo widgets interactivos (Executor, Position, Config) */}
             <div className="lg:col-span-1 flex flex-col gap-6">
               
-              {/* Muros Institucionales (OB Depth 1%) */}
-              <OrderBookDepthWidget 
-                latestRecord={data[data.length - 1]} 
-                isLoading={isLoading} 
-              />
-              
-              {/* Executor Operational Status */}
-              <ExecutorStatusWidget
-                status={executorStatus}
-                isLoading={isLoading}
-                onModeChange={handleModeChange}
-                isSaving={isSavingConfig}
-              />
-              
-              {/* Active Position Management Panel */}
-              <PositionManagementPanel
+              {/* TradingPanel fusionado (Executor + Position) */}
+              <TradingPanel
+                executor={executorStatus}
                 position={position}
                 isLoading={isLoading}
               />
-              
-              {/* Radar de Confirmación Algorítmica */}
-              <ConfirmationRadar
-                radarData={radarData}
-                isLoading={isLoading}
-              />
 
-              {/* Calibrador de Sensibilidad del Bot */}
+              {/* Calibrador de Sensibilidad */}
               <ConfigCard 
                 config={config}
                 onConfigChange={setConfig}

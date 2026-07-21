@@ -186,11 +186,11 @@ export const getConfig = async (): Promise<{ config: SystemConfig; isMocked: boo
     
     // Traducir de snake_case (FastAPI) a camelCase (React/TypeScript)
     const config: SystemConfig = {
-      umbralLiquidaciones: Number(source.umbral_liquidaciones),
-      deltaCvd: Number(source.delta_cvd_confirmacion),
-      leverage: Number(source.apalancamiento),
-      margenOperacion: Number(source.margen_operacion),
-      modoSistema: (source.modo_sistema as ModoSistema) || 'SIMULACION'
+      umbralLiquidaciones: Number(source.umbralLiquidaciones ?? source.umbral_liquidaciones),
+      deltaCvd: Number(source.deltaCvd ?? source.delta_cvd_confirmacion),
+      leverage: Number(source.leverage ?? source.apalancamiento),
+      margenOperacion: Number(source.margenOperacion ?? source.margen_operacion),
+      modoSistema: (source.modoSistema as ModoSistema) || (source.modo_sistema as ModoSistema) || 'SIMULACION'
     };
 
     localConfig = config;
@@ -239,13 +239,13 @@ export const saveConfig = async (config: SystemConfig): Promise<{ success: boole
     const source = rawData.calibration || rawData.data || rawData;
 
     // Actualizar localConfig si viene la respuesta del server
-    if (source && source.umbral_liquidaciones) {
+    if (source && (source.umbralLiquidaciones || source.umbral_liquidaciones)) {
       localConfig = {
-        umbralLiquidaciones: Number(source.umbral_liquidaciones),
-        deltaCvd: Number(source.delta_cvd_confirmacion),
-        leverage: Number(source.apalancamiento),
-        margenOperacion: Number(source.margen_operacion),
-        modoSistema: (source.modo_sistema as ModoSistema) || 'SIMULACION'
+        umbralLiquidaciones: Number(source.umbralLiquidaciones ?? source.umbral_liquidaciones),
+        deltaCvd: Number(source.deltaCvd ?? source.delta_cvd_confirmacion),
+        leverage: Number(source.leverage ?? source.apalancamiento),
+        margenOperacion: Number(source.margenOperacion ?? source.margen_operacion),
+        modoSistema: (source.modoSistema as ModoSistema) || (source.modo_sistema as ModoSistema) || 'SIMULACION'
       };
     } else {
       localConfig = config;
@@ -609,8 +609,8 @@ export const getPosition = async (): Promise<{ position: PositionData | null; is
     if (!raw) return { position: null, isMocked: false };
 
     const position: PositionData = {
-      id: Number(raw.id),
-      symbol: String(raw.symbol),
+      id: Number(raw.trade_id || raw.id || 0),
+      symbol: raw.symbol || 'BTCUSDT',
       side: raw.side as 'LONG' | 'SHORT',
       entryPrice: Number(raw.entry_price || raw.entryPrice || 0),
       markPrice: Number(raw.mark_price || raw.markPrice || 0),
@@ -620,7 +620,9 @@ export const getPosition = async (): Promise<{ position: PositionData | null; is
       stopLoss: Number(raw.stop_loss || raw.stopLoss || 0),
       takeProfit: raw.take_profit ? Number(raw.take_profit) : null,
       rActive: Number(raw.r_active ?? raw.rActive ?? 0),
-      rDistance: Number(raw.r_distance ?? raw.rDistance ?? 0),
+      riskUsd: Number(raw.risk_usd ?? 0),
+      marginUsd: Number(raw.margin_usd ?? 0),
+      riskPerBtc: Number(raw.risk_per_btc ?? 0),
       pnlType: String(raw.pnl_type || raw.pnlType || 'MARK_TO_MARKET')
     };
 
@@ -636,11 +638,13 @@ export const getPosition = async (): Promise<{ position: PositionData | null; is
     const lastPrice = simulatedData.length > 0 ? simulatedData[simulatedData.length - 1].precio : 65000;
     const entryPrice = 65142.20;
     const stopLoss = 64842.20;
-    const pnl = (lastPrice - entryPrice) * 0.0155;
+    const size = 0.0155;
+    const pnl = (lastPrice - entryPrice) * size;
     
-    const riskAmount = 300.0;
-    const rActive = pnl / riskAmount;
-    const rDistance = (lastPrice - stopLoss) / (entryPrice - stopLoss) - 1.0;
+    const riskPerBtc = Math.abs(entryPrice - stopLoss);
+    const riskUsd = riskPerBtc * size;
+    const rActive = riskUsd > 0 ? pnl / riskUsd : 0;
+    const marginUsd = (entryPrice * size) / 10;
 
     return {
       position: {
@@ -649,13 +653,15 @@ export const getPosition = async (): Promise<{ position: PositionData | null; is
         side: 'LONG',
         entryPrice,
         markPrice: lastPrice,
-        size: 0.0155,
+        size,
         leverage: 10,
         pnl: Math.round(pnl * 100) / 100,
         stopLoss,
         takeProfit: null,
         rActive: Math.round(rActive * 100) / 100,
-        rDistance: Math.round(rDistance * 100) / 100,
+        riskUsd: Math.round(riskUsd * 100) / 100,
+        marginUsd: Math.round(marginUsd * 100) / 100,
+        riskPerBtc: Math.round(riskPerBtc * 100) / 100,
         pnlType: 'MARK_TO_MARKET'
       },
       isMocked: true
@@ -690,7 +696,7 @@ export const getTrades = async (): Promise<{ trades: TradeData[]; isMocked: bool
       entryPrice: Number(raw.entry_price || raw.entryPrice || 0),
       exitPrice: raw.exit_price != null ? Number(raw.exit_price) : null,
       rMultiple: Number(raw.r_multiple ?? raw.rMultiple ?? 0),
-      pnl: Number(raw.pnl ?? raw.pnl_realizado ?? 0),
+      pnl: Number(raw.pnl_usd ?? raw.pnl ?? raw.pnl_realizado ?? 0),
       estado: String(raw.estado || raw.status || ''),
       modo: String(raw.modo || raw.mode || ''),
       amountBtc: Number(raw.amount_btc || raw.amountBtc || raw.cantidad_btc || 0),

@@ -106,7 +106,9 @@ export interface PositionData {
   stopLoss: number;
   takeProfit: number | null;
   rActive: number;
-  rDistance: number;
+  riskUsd: number;       // Riesgo real en USD (SL_dist * size)
+  marginUsd: number;     // Margen real usado (entry * size / leverage)
+  riskPerBtc: number;    // Distancia al SL en $ por BTC
   pnlType: string;
 }
 

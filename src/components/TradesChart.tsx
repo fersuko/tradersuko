@@ -46,6 +46,14 @@ export const TradesChart: React.FC<Props> = ({ telemetria, trades, isLoading }) 
         rightOffset: 8,
         barSpacing: 4,
         minBarSpacing: 2,
+        tickMarkFormatter: (time: number) => {
+          const d = new Date(time * 1000);
+          return d.toLocaleTimeString(undefined, {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          });
+        },
       },
       width: containerRef.current.clientWidth,
       height: 300,

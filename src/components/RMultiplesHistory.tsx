@@ -96,16 +96,16 @@ export const RMultiplesHistory: React.FC<RMultiplesHistoryProps> = ({
       </div>
 
       {/* Tabla del Historial de Operaciones */}
-      <div className="overflow-x-auto bg-slate-950/40 rounded border border-slate-900 font-mono text-[10px]">
+      <div className="overflow-x-auto bg-slate-950/40 rounded border border-slate-900 font-mono text-xs">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-slate-950 border-b border-slate-900 text-slate-500 uppercase tracking-wider font-bold">
-              <th className="px-4 py-2 border-r border-slate-900 w-12 text-center">#</th>
-              <th className="px-4 py-2 border-r border-slate-900 w-16">Hora</th>
-              <th className="px-4 py-2 border-r border-slate-900 w-12 text-center">S</th>
-              <th className="px-4 py-2 border-r border-slate-900">Entry Price</th>
-              <th className="px-4 py-2 border-r border-slate-900 text-center w-24">R-Múltiple</th>
-              <th className="px-4 py-2 text-right w-28">P&L (USD)</th>
+            <tr className="bg-slate-950 border-b border-slate-900 text-slate-500 uppercase tracking-wider font-bold text-[11px]">
+              <th className="px-4 py-2.5 border-r border-slate-900 w-12 text-center">#</th>
+              <th className="px-4 py-2.5 border-r border-slate-900 w-16">Hora</th>
+              <th className="px-4 py-2.5 border-r border-slate-900 w-12 text-center">S</th>
+              <th className="px-4 py-2.5 border-r border-slate-900">Entry Price</th>
+              <th className="px-4 py-2.5 border-r border-slate-900 text-center w-24">R-Múltiple</th>
+              <th className="px-4 py-2.5 text-right w-28">P&L (USD)</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-900 text-slate-300">
@@ -120,20 +120,20 @@ export const RMultiplesHistory: React.FC<RMultiplesHistoryProps> = ({
                 const isWin = trade.rMultiple >= 0;
                 return (
                   <tr key={trade.id} className="hover:bg-slate-900/40 transition-colors">
-                    <td className="px-4 py-2 border-r border-slate-900 text-slate-600 text-center">{trade.id}</td>
-                    <td className="px-4 py-2 border-r border-slate-900 text-slate-400">{formatShortTime(trade.timestamp)}</td>
-                    <td className="px-4 py-2 border-r border-slate-900 text-center font-bold">
+                    <td className="px-4 py-2.5 border-r border-slate-900 text-slate-600 text-center text-xs">{trade.id}</td>
+                    <td className="px-4 py-2.5 border-r border-slate-900 text-slate-400 text-xs">{formatShortTime(trade.timestamp)}</td>
+                    <td className="px-4 py-2.5 border-r border-slate-900 text-center font-bold text-xs">
                       <span className={trade.side === 'LONG' ? 'text-brand-green' : 'text-brand-red'}>
                         {trade.side === 'LONG' ? 'L' : 'S'}
                       </span>
                     </td>
-                    <td className="px-4 py-2 border-r border-slate-900 font-bold">${trade.entryPrice.toLocaleString('en-US', { minimumFractionDigits: 1 })}</td>
-                    <td className="px-4 py-2 border-r border-slate-900 text-center font-black">
+                    <td className="px-4 py-2.5 border-r border-slate-900 font-bold text-xs">${trade.entryPrice.toLocaleString('en-US', { minimumFractionDigits: 1 })}</td>
+                    <td className="px-4 py-2.5 border-r border-slate-900 text-center font-black text-xs">
                       <span className={isWin ? 'text-brand-green' : 'text-brand-red'}>
                         {trade.rMultiple >= 0 ? '+' : ''}{trade.rMultiple.toFixed(2)}R
                       </span>
                     </td>
-                    <td className="px-4 py-2 text-right font-black">
+                    <td className="px-4 py-2.5 text-right font-black text-xs">
                       <span className={isWin ? 'text-brand-green' : 'text-brand-red'}>
                         {isWin ? '+' : ''}${trade.pnl.toLocaleString('en-US', { minimumFractionDigits: 1 })}
                       </span>
