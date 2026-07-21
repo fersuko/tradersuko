@@ -32,3 +32,13 @@ dist-ssr
 # Local instances/config
 instances/
 
+# Backend
+backend/venv/
+backend/__pycache__/
+backend/**/*.pyc
+backend/.env
+backend/core/venv/
+backend/core/__pycache__/
+backend/core/**/*.pyc
+*.log
+

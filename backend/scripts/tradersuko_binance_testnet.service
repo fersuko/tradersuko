@@ -1,0 +1,17 @@
+[Unit]
+Description=TraderSuko — Instancia TESTNET (Binance BTC DEMO)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=hermes
+WorkingDirectory=/home/hermes/hermes_trading
+Environment=TRADERSUKO_ENV=/home/hermes/hermes_trading/.env.testnet
+Environment=TRADERSUKO_MODO=DEMO
+ExecStart=/home/hermes/hermes_trading/venv/bin/python3 /home/hermes/hermes_trading/hermes_executor.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

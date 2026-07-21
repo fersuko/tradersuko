@@ -1,0 +1,18 @@
+[Unit]
+Description=TraderSuko — Instancia REAL (Binance BTC REAL)
+After=network.target postgresql.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+WorkingDirectory=/home/hermes/tradersuko/instances/binance_real
+ExecStart=/home/hermes/hermes_trading/venv/bin/python /home/hermes/tradersuko/instances/binance_real/executor.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

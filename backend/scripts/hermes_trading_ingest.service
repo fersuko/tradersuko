@@ -1,0 +1,17 @@
+[Unit]
+Description=Hermes Trading — Ingestor de datos en tiempo real (Binance WebSocket)
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=hermes
+WorkingDirectory=/home/hermes/hermes_trading
+ExecStart=/home/hermes/hermes_trading/venv/bin/python3 /home/hermes/hermes_trading/hermes_ingest.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/hermes/hermes_trading/ingesta.log
+StandardError=append:/home/hermes/hermes_trading/ingesta.log
+
+[Install]
+WantedBy=multi-user.target

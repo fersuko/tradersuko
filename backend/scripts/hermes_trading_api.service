@@ -1,0 +1,17 @@
+[Unit]
+Description=Hermes Trading — API REST (FastAPI)
+After=network.target docker.service hermes_trading_ingest.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=hermes
+WorkingDirectory=/home/hermes/hermes_trading
+ExecStart=/home/hermes/hermes_trading/venv/bin/python3 -m uvicorn hermes_api:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/hermes/hermes_trading/api.log
+StandardError=append:/home/hermes/hermes_trading/api.log
+
+[Install]
+WantedBy=multi-user.target

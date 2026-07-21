@@ -1,0 +1,19 @@
+[Unit]
+Description=TraderSuko - MEXC SOL/USDT Instance (REAL)
+After=network.target postgresql.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+WorkingDirectory=/home/hermes/tradersuko/instances/mexc_sol
+Environment="MEXC_ENV=/home/hermes/tradersuko/instances/mexc_sol/.env.mexc"
+ExecStart=/home/hermes/hermes_trading/venv/bin/python /home/hermes/tradersuko/instances/mexc_sol/mexc_executor.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

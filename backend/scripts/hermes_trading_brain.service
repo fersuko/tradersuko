@@ -1,0 +1,17 @@
+[Unit]
+Description=Hermes Trading — Cerebro Analítico Cuantitativo
+After=network.target docker.service hermes_trading_ingest.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=hermes
+WorkingDirectory=/home/hermes/hermes_trading
+ExecStart=/home/hermes/hermes_trading/venv/bin/python3 /home/hermes/hermes_trading/hermes_brain.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/hermes/hermes_trading/brain.log
+StandardError=append:/home/hermes/hermes_trading/brain.log
+
+[Install]
+WantedBy=multi-user.target
