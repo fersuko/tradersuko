@@ -202,11 +202,12 @@ export const TradingPanel: React.FC<TradingPanelProps> = ({
             <div className="text-[10px] font-bold text-slate-300 bg-slate-950/40 p-1.5 rounded border border-slate-900 truncate">
               {ultimoTrade ? (
                 <div className="flex items-center justify-between">
-                  <span className={(ultimoTrade.tipo || '').includes('BUY') || (ultimoTrade.tipo || '').includes('LONG') ? 'text-brand-green' : 'text-brand-red'}>
-                    {ultimoTrade.tipo || '---'}
+                  <span className={`font-extrabold ${(ultimoTrade.lado || '') === 'LONG' ? 'text-brand-green' : 'text-brand-red'}`}>
+                    {(ultimoTrade.lado || '---').toUpperCase()}
                   </span>
                   <span className="text-white font-bold">
-                    {ultimoTrade.precio && !isNaN(ultimoTrade.precio) ? `$${ultimoTrade.precio.toLocaleString('en-US')}` : '---'}
+                    {ultimoTrade.precio_entrada && !isNaN(ultimoTrade.precio_entrada) ? `$${ultimoTrade.precio_entrada.toLocaleString('en-US')}` : '---'}
+                    {ultimoTrade.apalancamiento_usado ? ` · ${ultimoTrade.apalancamiento_usado}x` : ''}
                   </span>
                 </div>
               ) : (
