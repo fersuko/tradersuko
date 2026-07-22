@@ -480,7 +480,7 @@ export const Dashboard: React.FC = () => {
             <span>Target Node: {API_BASE_URL}</span>
           </div>
           <div>
-            <span>TraderSuko Frontend System • Copiloto Antigravity 2026</span>
+            <span>TraderSuko Frontend System • asesortecnologico.net</span>
           </div>
         </div>
       </footer>
