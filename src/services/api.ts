@@ -528,6 +528,9 @@ export const getExecutorStatus = async (): Promise<{ status: ExecutorStatus; isM
         timestamp: String(raw.ultimo_trade.timestamp || new Date().toISOString()),
         tipo: String(raw.ultimo_trade.tipo || raw.ultimo_trade.side || raw.ultimo_trade.tipo_orden || 'TRADE'),
         precio: Number(raw.ultimo_trade.precio || raw.ultimo_trade.price || 0),
+        lado: String(raw.ultimo_trade.lado || raw.ultimo_trade.signal_tipo || '---'),
+        precio_entrada: Number(raw.ultimo_trade.precio_entrada || 0),
+        apalancamiento_usado: Number(raw.ultimo_trade.apalancamiento_usado || 0),
         mensaje: raw.ultimo_trade.mensaje ? String(raw.ultimo_trade.mensaje) : undefined
       } : null,
       ultimaSenal: raw.ultima_senal ? {
@@ -550,6 +553,9 @@ export const getExecutorStatus = async (): Promise<{ status: ExecutorStatus; isM
       timestamp: new Date(now.getTime() - 3600000).toISOString(),
       tipo: 'BUY_LONG',
       precio: 64120.5,
+      lado: 'LONG',
+      precio_entrada: 64120.5,
+      apalancamiento_usado: 5,
       mensaje: 'Ejecución exitosa de orden LONG en Binance'
     } : null;
 

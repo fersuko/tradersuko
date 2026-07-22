@@ -57,6 +57,9 @@ export interface ExecutorStatus {
     timestamp: string;
     tipo: string;
     precio: number;
+    lado: string;
+    precio_entrada: number;
+    apalancamiento_usado: number;
     mensaje?: string;
   } | null;
   ultimaSenal: {
