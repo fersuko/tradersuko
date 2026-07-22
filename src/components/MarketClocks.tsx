@@ -72,7 +72,7 @@ function getCryptoSessionInfo(now: Date): { isActive: boolean; label: string }[]
   results.push({ isActive: isLdnActive, label: isLdnActive ? 'Sesión activa 🇬🇧' : 'Fuera de horario 🌙' });
 
   // Hong Kong (UTC+8)
-  const hkTotalMin = (utcTotalMin + 16 * 60) % (24 * 60);
+  const hkTotalMin = (utcTotalMin + 8 * 60) % (24 * 60);
   const hkHour = Math.floor(hkTotalMin / 60);
   const isHKActive = hkHour >= 9 && hkHour < 17; // 9:00-17:00 HK
   results.push({ isActive: isHKActive, label: isHKActive ? 'Sesión activa 🏯' : 'Fuera de horario 🌙' });

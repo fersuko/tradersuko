@@ -16,7 +16,6 @@ import {
   Wifi, 
   WifiOff, 
   RefreshCw, 
-  Clock, 
   Layers, 
   ShieldAlert,
   Server
@@ -26,7 +25,7 @@ export const Dashboard: React.FC = () => {
   const [data, setData] = useState<TelemetriaRegistro[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isMocked, setIsMocked] = useState<boolean>(false);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [, setLastUpdate] = useState<Date | null>(null);
   const [limit, setLimit] = useState<number>(100);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [pocData, setPocData] = useState<PocData | null>(null);
@@ -268,43 +267,31 @@ export const Dashboard: React.FC = () => {
           {/* Estado de Conexión y Control */}
           <div className="flex items-center gap-3">
             
-            {/* Indicador de Alerta de Capital en Riesgo */}
+            {/* Indicador de Alerta de Capital en Riesgo — compacto */}
             {config.modoSistema === 'REAL' && (
-              <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-brand-red/20 bg-brand-red/10 text-brand-red text-[10px] font-mono font-black tracking-wider animate-pulse">
-                <ShieldAlert className="w-3.5 h-3.5 text-brand-red" />
-                <span>REAL TIME TRADING ACTIVO - CAPITAL EN RIESGO</span>
+              <div className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded border border-brand-red/20 bg-brand-red/10 text-brand-red text-[8px] font-mono font-bold tracking-wider animate-pulse">
+                <ShieldAlert className="w-2.5 h-2.5 text-brand-red" />
+                <span>🔴 REAL</span>
               </div>
             )}
             {config.modoSistema === 'DEMO' && (
-              <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-500 text-[10px] font-mono font-black tracking-wider animate-pulse">
-                <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
-                <span>DEMO TRADING ACTIVO - EJECUCIÓN SIMULADA EN VIVO</span>
+              <div className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded border border-amber-500/20 bg-amber-500/10 text-amber-500 text-[8px] font-mono font-bold tracking-wider animate-pulse">
+                <ShieldAlert className="w-2.5 h-2.5 text-amber-500" />
+                <span>🟡 DEMO</span>
               </div>
             )}
 
-            {/* Estado de VPN / Tailscale */}
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[10px] font-mono font-semibold transition-all duration-300 ${
+            {/* Estado de VPN / Tailscale — compacto */}
+            <div className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[8px] font-mono font-semibold transition-all duration-300 ${
               isMocked 
                 ? 'bg-amber-500/5 text-amber-400 border-amber-500/15'
-                : 'bg-brand-green/5 text-brand-green border-brand-green/15 text-glow-green'
+                : 'bg-brand-green/5 text-brand-green border-brand-green/15'
             }`}>
               {isMocked ? (
-                <>
-                  <WifiOff className="w-3.5 h-3.5 animate-pulse" />
-                  <span>VPN DESCONECTADA (EMULADOR)</span>
-                </>
+                <WifiOff className="w-2.5 h-2.5" />
               ) : (
-                <>
-                  <Wifi className="w-3.5 h-3.5 text-brand-green text-glow-green" />
-                  <span>VPN SEGURA ACTIVA (100.91.150.120)</span>
-                </>
+                <Wifi className="w-2.5 h-2.5" />
               )}
-            </div>
-
-            {/* Frecuencia / Polling Indicator */}
-            <div className="hidden sm:flex items-center gap-1.5 text-slate-500 text-xs font-mono border border-slate-900 bg-slate-950 px-3 py-1.5 rounded-lg">
-              <Clock className="w-3.5 h-3.5 text-slate-600" />
-              <span>5s POLLING {lastUpdate ? `[${lastUpdate.toLocaleTimeString()}]` : ''}</span>
             </div>
 
             {/* Botón Refrescar Manual */}
@@ -320,9 +307,9 @@ export const Dashboard: React.FC = () => {
         </div>
       </header>
 
-      {/* 1.5. Market Clocks Globales */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full -mt-4">
-        <div className="p-3 rounded-xl border border-slate-800/40 bg-slate-950/40 backdrop-blur-sm">
+      {/* 1.5. Market Clocks Globales — Sticky */}
+      <div className="sticky top-16 z-40 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full -mt-4">
+        <div className="p-2 rounded-xl border border-slate-800/40 bg-slate-950/40 backdrop-blur-sm">
           <MarketClocks />
         </div>
       </div>
