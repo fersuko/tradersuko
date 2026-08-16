@@ -41,12 +41,12 @@ export const Dashboard: React.FC = () => {
   // ⚠️ Valores iniciales = respaldo. Deben coincidir con la DB real (hermes_config id=1)
   // para que el autoguardado nunca pise la config del bot con valores viejos.
   const [config, setConfig] = useState<SystemConfig>({
-    umbralLiquidaciones: 150000,
+    umbralLiquidaciones: 5000000,
     deltaCvd: 2000000,
     cvdTecho: 25000000,
     leverage: 5,
     margenOperacion: 30,
-    modoSistema: 'SIMULACION'
+    modoSistema: 'REAL'
   });
   const [isConfigMocked, setIsConfigMocked] = useState<boolean>(false);
   const [configLoaded, setConfigLoaded] = useState<boolean>(false);
@@ -263,7 +263,7 @@ export const Dashboard: React.FC = () => {
                   TraderSuko
                 </h1>
                 <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono tracking-widest">
-                  V1.5
+                  V1.6
                 </span>
               </div>
               <p className="text-[9px] text-slate-500 font-orbitron font-medium tracking-wide">

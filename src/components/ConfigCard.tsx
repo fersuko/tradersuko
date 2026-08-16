@@ -87,9 +87,9 @@ export const ConfigCard: React.FC<ConfigCardProps> = ({
             </div>
             <input
               type="range"
-              min={10000}
-              max={1000000}
-              step={10000}
+              min={100000}
+              max={20000000}
+              step={250000}
               value={config.umbralLiquidaciones}
               onChange={(e) => handleSliderChange('umbralLiquidaciones', Number(e.target.value))}
               className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-brand-cyan"

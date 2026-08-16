@@ -8,12 +8,12 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://100.91.150.1
 // los escribiría en la DB y pisaría la configuración real. Valores al 16-ago-2026:
 // 5x, margen 30%, umbrales 150K/750K (checkpoint v1.5: Liq $1.0M, CVD $1.2M).
 let localConfig: SystemConfig = {
-  umbralLiquidaciones: 150000,
+  umbralLiquidaciones: 5000000,
   deltaCvd: 2000000,
   cvdTecho: 25000000,
   leverage: 5,
   margenOperacion: 30,
-  modoSistema: 'SIMULACION'
+  modoSistema: 'REAL'
 };
 
 // Generador de datos simulados para fallback en desarrollo/pruebas
