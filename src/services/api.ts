@@ -3,12 +3,15 @@ import type { TelemetriaResponse, TelemetriaRegistro, SystemConfig, PocData, Sys
 // URL base de la API desde las variables de entorno de Vite o fallback a la IP de Tailscale provista
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://100.91.150.120:8000';
 
-// Configuración simulada inicial
+// Configuración simulada inicial — ⚠️ DEBE coincidir con la DB real (hermes_config id=1).
+// Si estos valores no coinciden con el bot y el frontend entra en fallback, el autoguardado
+// los escribiría en la DB y pisaría la configuración real. Valores al 16-ago-2026:
+// 5x, margen 30%, umbrales 150K/750K (checkpoint v1.5: Liq $1.0M, CVD $1.2M).
 let localConfig: SystemConfig = {
   umbralLiquidaciones: 150000,
   deltaCvd: 750000,
-  leverage: 10,
-  margenOperacion: 2.5,
+  leverage: 5,
+  margenOperacion: 30,
   modoSistema: 'SIMULACION'
 };
 

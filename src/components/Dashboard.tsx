@@ -38,11 +38,13 @@ export const Dashboard: React.FC = () => {
   const [isTradesLoading, setIsTradesLoading] = useState<boolean>(true);
 
   // Estados de configuración de calibración
+  // ⚠️ Valores iniciales = respaldo. Deben coincidir con la DB real (hermes_config id=1)
+  // para que el autoguardado nunca pise la config del bot con valores viejos.
   const [config, setConfig] = useState<SystemConfig>({
-    umbralLiquidaciones: 200000,
-    deltaCvd: 500000,
-    leverage: 10,
-    margenOperacion: 2.0,
+    umbralLiquidaciones: 150000,
+    deltaCvd: 750000,
+    leverage: 5,
+    margenOperacion: 30,
     modoSistema: 'SIMULACION'
   });
   const [isConfigMocked, setIsConfigMocked] = useState<boolean>(false);
@@ -68,6 +70,11 @@ export const Dashboard: React.FC = () => {
   // Debouncing para autoguardar la configuración en la DB del VPS
   useEffect(() => {
     if (!configLoaded) return;
+    // ⚠️ FIX (16-ago-2026): si la config vino del fallback local (isConfigMocked=true),
+    // NO autoguardar en la DB. Antes, cuando el fetch a la API tardaba >2s, el frontend
+    // cargaba los valores hardcodeados de respaldo y este useEffect los escribía en la DB,
+    // pisando la configuración real del bot (leverage 10, margen 2.5, umbrales viejos).
+    if (isConfigMocked) return;
 
     setIsSavingConfig(true);
     setConfigSaveStatus('idle');
