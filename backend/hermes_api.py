@@ -107,6 +107,7 @@ def snake_to_camel(data: dict) -> dict:
     mapping = {
         "umbral_liquidaciones": "umbralLiquidaciones",
         "delta_cvd_confirmacion": "deltaCvd",
+        "cvd_techo": "cvdTecho",
         "apalancamiento": "leverage",
         "margen_operacion": "margenOperacion",
         "modo_sistema": "modoSistema",
@@ -190,6 +191,7 @@ async def health():
 class ConfigUpdate(BaseModel):
     umbral_liquidaciones: Optional[float] = None
     delta_cvd_confirmacion: Optional[float] = None
+    cvd_techo: Optional[float] = None
     apalancamiento: Optional[int] = None
     margen_operacion: Optional[float] = None
     modo_sistema: Optional[Literal["SIMULACION", "DEMO", "REAL"]] = None
@@ -233,6 +235,8 @@ async def update_config(config: ConfigUpdate):
         updates["umbral_liquidaciones"] = config.umbral_liquidaciones
     if config.delta_cvd_confirmacion is not None:
         updates["delta_cvd_confirmacion"] = config.delta_cvd_confirmacion
+    if config.cvd_techo is not None:
+        updates["cvd_techo"] = config.cvd_techo
     if config.apalancamiento is not None:
         updates["apalancamiento"] = config.apalancamiento
     if config.margen_operacion is not None:
@@ -510,8 +514,10 @@ async def get_executor_status():
             cur.execute(
                 """
                 SELECT id, timestamp, lado, precio_entrada, cantidad_btc,
-                       valor_usd, stop_loss, take_profit, estado, modo, razon
+                       valor_usd, stop_loss, take_profit, estado, modo, razon,
+                       signal_tipo, apalancamiento_usado
                 FROM hermes_trades
+                WHERE estado NOT IN ('FALLIDO')
                 ORDER BY timestamp DESC LIMIT 1
                 """
             )

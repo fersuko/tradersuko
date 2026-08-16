@@ -93,12 +93,13 @@ class Executor:
         self.modo_sistema = "SIMULACION"
         self.umbral_liquidaciones = 300000.0
         self.delta_cvd_confirmacion = 500000.0
+        self.cvd_techo = 25000000.0  # v1.6: CVD > techo = agotamiento/trampa de liquidez, NO entrar (LONG 42M+ = 0/3 WR)
         self.apalancamiento = 5
         self.margen_operacion = 2.0
         self.last_sl_time = 0  # timestamp del último stop-loss
         self.sl_cooldown = 180  # 3 min de espera tras un stop-loss (antes 10 min)
         self.last_sim_trade_time = 0  # control duplicados en SIMULACION
-        self.trend_filter_enabled = False  # Filtro VWAP desactivado — el order flow 3/3 es suficiente
+        self.trend_filter_enabled = True  # Filtro VWAP ACTIVADO — solo operar en dirección de la tendencia (activado 15-ago-2026 tras análisis: SHORT -5.36 vs LONG +1.56)
 
     # ── Conexiones ────────────────────────────────────────────
     def connect_db(self):
@@ -193,6 +194,7 @@ class Executor:
                 self.delta_cvd_confirmacion = float(
                     row.get("delta_cvd_confirmacion", 500000.0)
                 )
+                self.cvd_techo = float(row.get("cvd_techo", 25000000.0))
                 self.apalancamiento = int(row.get("apalancamiento", 10))
                 self.margen_operacion = float(row.get("margen_operacion", 2.0))
                 self.modo_sistema = str(row.get("modo_sistema", "SIMULACION"))
@@ -373,10 +375,20 @@ class Executor:
 
         # Diagnóstico: mostrar condiciones actuales
         log.info(
-            f"📊 Evaluando: CVD=${abs(cvd):,.0f} (umbral=${self.delta_cvd_confirmacion:,.0f}) | "
+            f"📊 Evaluando: CVD=${abs(cvd):,.0f} (umbral=${self.delta_cvd_confirmacion:,.0f}, techo=${self.cvd_techo:,.0f}) | "
             f"Liq 1m=${total_liq_1m:,.0f} (umbral=${self.umbral_liquidaciones:,.0f}) | "
             f"Bids=${depth_b:,.0f} Asks=${depth_s:,.0f}"
         )
+
+        # ── Filtro de Techo CVD (v1.6) ─────────────────────
+        # CVD extremo (> techo) = movimiento agotado / caza de liquidez.
+        # Histórico: LONG con CVD 42M+ → 0/3 ganadores; sweet spot 2M-25M → 83% WR.
+        cvd_exhausted = abs(cvd) > self.cvd_techo
+        if cvd_exhausted:
+            log.info(
+                f"🚫 CVD ${abs(cvd):,.0f} EXCEDE techo ${self.cvd_techo:,.0f} — "
+                f"movimiento agotado, bloqueando señales LONG y SHORT"
+            )
 
         # ── Filtro de Tendencia VWAP ──────────────────────
         # Si el precio está sobre el VWAP → sesgo alcista (solo LONG)
@@ -420,6 +432,13 @@ class Executor:
             razones_long.append(f"Liq Shorts ${liq_shorts_1m:,.0f}")
 
         if condiciones_long >= 3:
+            # Filtro de techo CVD: movimiento agotado, no entrar
+            if cvd_exhausted:
+                log.info(
+                    f"🚫 Señal LONG ({condiciones_long}/3) BLOQUEADA por techo CVD — "
+                    f"CVD ${abs(cvd):,.0f} > ${self.cvd_techo:,.0f} (agotamiento)"
+                )
+                return None, None
             # Filtro de tendencia
             if trend == "SHORT_ONLY":
                 log.info(
@@ -450,6 +469,13 @@ class Executor:
             razones_short.append(f"Liq Longs ${liq_longs_1m:,.0f}")
 
         if condiciones_short >= 3:
+            # Filtro de techo CVD: movimiento agotado, no entrar
+            if cvd_exhausted:
+                log.info(
+                    f"🚫 Señal SHORT ({condiciones_short}/3) BLOQUEADA por techo CVD — "
+                    f"CVD ${abs(cvd):,.0f} > ${self.cvd_techo:,.0f} (agotamiento)"
+                )
+                return None, None
             # Filtro de tendencia
             if trend == "LONG_ONLY":
                 log.info(
@@ -487,8 +513,8 @@ class Executor:
     # ── Verificación de posición abierta ──────────────────────
     async def has_open_position(self, side: str) -> bool:
         """
-        Verifica si ya tenemos una posición abierta del lado indicado.
-        Retorna True si ya hay posición.
+        Verifica si YA HAY ALGUNA posición abierta en exchange o DB.
+        Retorna True si ya hay posición (de cualquier lado).
         """
         if not self.exchange:
             return False
@@ -505,12 +531,11 @@ class Executor:
                                      pos.get("size", 0) or 0)
                         if abs(size) > 0:
                             pos_side = "long" if size > 0 else "short"
-                            if pos_side == side.lower():
-                                log.info(
-                                    f"🔒 Posición {side.upper()} ya abierta en exchange: "
-                                    f"{abs(size):.4f} BTC"
-                                )
-                                return True
+                            log.info(
+                                f"🔒 Posición {pos_side.upper()} detectada en exchange: "
+                                f"{abs(size):.4f} BTC — BLOQUEANDO nuevo trade {side}"
+                            )
+                            return True
                 except Exception as e:
                     log.warning(f"⚠️ Error checkeando exchange: {e}")
 
@@ -520,11 +545,10 @@ class Executor:
                 cur.execute("""
                     SELECT COUNT(*) FROM hermes_trades
                     WHERE estado = 'EJECUTADO'
-                    AND lado = %s
-                """, (side.upper(),))
+                """)
                 count = cur.fetchone()[0]
                 if count > 0:
-                    log.info(f"🔒 {count} trade(s) {side} activo(s) en DB")
+                    log.info(f"🔒 {count} trade(s) activo(s) en DB — BLOQUEANDO nuevo trade {side}")
                     return True
 
             return False
@@ -617,8 +641,10 @@ class Executor:
             else:
                 cantidad_btc = Decimal("0")
 
-            # Redondear a satoshi (8 decimales para futuros)
-            cantidad_btc = cantidad_btc.quantize(Decimal("0.00001"))
+            # Redondear a precisión real de Binance BTC/USDT futuros (3 decimales)
+            # ⚠️ IMPORTANTE: si se redondea a más decimales, Binance ejecuta distinto
+            # y la DB queda desincronizada (ej: bot dice 0.00414, exchange tiene 0.004)
+            cantidad_btc = cantidad_btc.quantize(Decimal("0.001"))
 
             # Asegurar mínimo 0.001 BTC (exigencia de Binance Futures)
             if cantidad_btc < MIN_BTC and balance_antes > 0:
@@ -730,20 +756,38 @@ class Executor:
                         order_id = order.get("id", "unknown")
                         log.info(f"✅ LIMIT postOnly EJECUTADA ID: {order_id} @ ${price_filled:.2f} (maker fee!)")
                     else:
-                        # No se llenó como maker — fallback inmediato a MARKET (sin polling)
-                        log.info(f"⏳ LIMIT postOnly no llenó como maker — fallback a MARKET")
-                        order = await self.exchange.create_order(
-                            symbol=SYMBOL,
-                            type="market",
-                            side=order_side,
-                            amount=cantidad_btc,
-                            params={},
-                        )
-                        price_filled = float(
-                            order.get("price") or order.get("average") or precio_actual
-                        )
-                        order_id = order.get("id", "unknown")
-                        log.info(f"✅ FALLBACK MARKET EJECUTADA ID: {order_id} @ ${price_filled:.2f} (taker fee)")
+                        # No se llenó como maker (o se llenó PARCIALMENTE).
+                        # ⚠️ CRÍTICO: si hubo llenado parcial, restar lo ya llenado
+                        # para NO duplicar posición en el fallback MARKET.
+                        remaining = cantidad_btc - filled
+                        if remaining <= 0 or remaining < 0.001:
+                            # Ya está todo llenado o lo restante es inejecutable (< mínimo)
+                            if filled > 0:
+                                price_filled = float(
+                                    order.get("average") or order.get("price") or limit_price
+                                )
+                                order_id = order.get("id", "unknown")
+                                log.info(f"✅ LIMIT parcial llenada ({filled:.5f} BTC) — sin fallback necesario")
+                            else:
+                                log.warning(f"⚠️ LIMIT IOC no se llenó y resto {remaining:.5f} < mínimo 0.001 — abortando")
+                                resultado["estado"] = "FALLIDO"
+                                resultado["razon"] = f"LIMIT IOC sin llenado y resto {remaining:.5f} < 0.001"
+                                return resultado
+                        else:
+                            # Fallback MARKET solo por la cantidad RESTANTE
+                            log.info(f"⏳ LIMIT parcial ({filled:.5f} BTC llenado) — fallback MARKET por {remaining:.5f} BTC")
+                            order = await self.exchange.create_order(
+                                symbol=SYMBOL,
+                                type="market",
+                                side=order_side,
+                                amount=remaining,
+                                params={},
+                            )
+                            price_filled = float(
+                                order.get("price") or order.get("average") or precio_actual
+                            )
+                            order_id = order.get("id", "unknown")
+                            log.info(f"✅ FALLBACK MARKET EJECUTADA ID: {order_id} @ ${price_filled:.2f} (taker fee)")
                 except Exception as limit_err:
                     # Si falla LIMIT, ir directo a MARKET
                     log.warning(f"⚠️ Falló LIMIT postOnly ({limit_err}) — fallback a MARKET")
@@ -1014,14 +1058,38 @@ class Executor:
                     pass
 
             close_side = "sell" if side == "LONG" else "buy"
-            log.warning(f"⏰ CERRANDO POSICIÓN #{trade_id} {side}: {amount:.5f} BTC @ Mercado | Razón: {reason}")
+            
+            # ── Usar la cantidad REAL de la posición en Binance ──
+            # ⚠️ La DB puede tener 0.00414 pero Binance solo 0.004 (precisión 0.001).
+            # Si intentamos cerrar más de lo que hay, reduceOnly falla o deja residuo.
+            real_amount = amount
+            try:
+                import requests as _req3, time as _time3
+                import hashlib as _hl3, hmac as _hm3
+                _ts3 = int(_time3.time() * 1000)
+                _qs3 = f"symbol=BTCUSDT&timestamp={_ts3}&recvWindow=10000"
+                _sig3 = _hm3.new(self.exchange.secret.encode(), _qs3.encode(), _hl3.sha256).hexdigest()
+                _url3 = f"https://fapi.binance.com/fapi/v2/positionRisk?{_qs3}&signature={_sig3}"
+                _r3 = _req3.get(_url3, headers={"X-MBX-APIKEY": self.exchange.apiKey})
+                if _r3.status_code == 200:
+                    for _pos in _r3.json():
+                        _amt = float(_pos.get("positionAmt", 0) or 0)
+                        if abs(_amt) > 0.0005:
+                            real_amount = abs(_amt)
+                            _pos_side = "SHORT" if _amt < 0 else "LONG"
+                            log.info(f"📡 Cantidad real para cierre: {real_amount:.5f} BTC {_pos_side} (DB decía {amount:.5f})")
+                            break
+            except Exception as e:
+                log.warning(f"⚠️ No se pudo leer posición real para cierre, usando DB: {e}")
+
+            log.warning(f"⏰ CERRANDO POSICIÓN #{trade_id} {side}: {real_amount:.5f} BTC @ Mercado | Razón: {reason}")
 
             try:
                 close_order = await self.exchange.create_order(
                     symbol=SYMBOL,
                     type="market",
                     side=close_side,
-                    amount=amount,
+                    amount=real_amount,
                     params={"reduceOnly": True},
                 )
             except Exception as close_err:
@@ -1082,16 +1150,40 @@ class Executor:
                 f"{amount:.5f} BTC @ ${fill_price:.2f} | Razón: {reason}",
             )
 
-            # Marcar el trade como cerrado en DB
+            # Marcar el trade como cerrado en DB + calcular PnL REAL
             try:
                 self.connect_db()
                 with self.conn.cursor() as cur:
+                    # Obtener entry price y balance_antes para calcular PnL real
                     cur.execute(
-                        "UPDATE hermes_trades SET estado = 'CLOSED_FORCE' WHERE id = %s",
+                        "SELECT precio_entrada, balance_antes FROM hermes_trades WHERE id = %s",
                         (trade_id,),
                     )
+                    _trow = cur.fetchone()
+                    _entry = float(_trow[0]) if _trow and _trow[0] else 0.0
+                    _bal_antes = float(_trow[1]) if _trow and _trow[1] else 0.0
+
+                    # PnL realizado = (fill - entry) * qty para LONG, (entry - fill) * qty para SHORT
+                    if _entry > 0 and fill_price > 0:
+                        _pnl_real = (fill_price - _entry) * real_amount if side == "LONG" \
+                                    else (_entry - fill_price) * real_amount
+                    else:
+                        _pnl_real = None
+
+                    if _pnl_real is not None and _bal_antes > 0:
+                        cur.execute(
+                            "UPDATE hermes_trades SET estado = 'CLOSED_FORCE', "
+                            "pnl_realizado = %s, balance_despues = %s WHERE id = %s",
+                            (round(_pnl_real, 2), round(_bal_antes + _pnl_real, 2), trade_id),
+                        )
+                        log.info(f"📝 Trade #{trade_id} cerrado: PnL real {_pnl_real:+.2f} USDT (entry={_entry:.2f} fill={fill_price:.2f})")
+                    else:
+                        cur.execute(
+                            "UPDATE hermes_trades SET estado = 'CLOSED_FORCE' WHERE id = %s",
+                            (trade_id,),
+                        )
+                        log.info(f"📝 Trade #{trade_id} marcado como CLOSED_FORCE en DB (sin datos de PnL)")
                 self.conn.commit()
-                log.info(f"📝 Trade #{trade_id} marcado como CLOSED_FORCE en DB")
             except Exception as e:
                 log.warning(f"⚠️ Error actualizando estado en DB: {e}")
 
@@ -1154,7 +1246,7 @@ class Executor:
                 except Exception as e2:
                     log.warning(f"⚠️ Error leyendo posición: {e2}")
 
-            # ── Cancelar TODAS las órdenes (incluyendo condicionales) ──
+            # ── Cancelar SOLO si hay órdenes abiertas (evita spam y rate limits) ──
             try:
                 import requests as _req2, time as _time2
                 import hashlib as _hl2, hmac as _hm2, urllib.parse as _up2
@@ -1163,9 +1255,20 @@ class Executor:
                 _qs2 = _up2.urlencode(sorted(_p2.items()))
                 _sig2 = _hm2.new(self.exchange.secret.encode(), _qs2.encode(), _hl2.sha256).hexdigest()
                 _url2 = f"https://fapi.binance.com/fapi/v1/allOpenOrders?{_qs2}&signature={_sig2}"
-                _r2 = _req2.delete(_url2, headers={"X-MBX-APIKEY": self.exchange.apiKey})
+                _r2 = _req2.get(_url2, headers={"X-MBX-APIKEY": self.exchange.apiKey})
                 if _r2.status_code == 200:
-                    log.warning(f"🗑️ Canceladas TODAS las órdenes (reconcile)")
+                    _open = _r2.json()
+                    if isinstance(_open, list) and len(_open) > 0:
+                        # Hay órdenes abiertas → cancelarlas
+                        _ts3 = int(_time2.time() * 1000)
+                        _p3 = {"symbol": "BTCUSDT", "timestamp": _ts3}
+                        _qs3 = _up2.urlencode(sorted(_p3.items()))
+                        _sig3 = _hm2.new(self.exchange.secret.encode(), _qs3.encode(), _hl2.sha256).hexdigest()
+                        _url3 = f"https://fapi.binance.com/fapi/v1/allOpenOrders?{_qs3}&signature={_sig3}"
+                        _r3 = _req2.delete(_url3, headers={"X-MBX-APIKEY": self.exchange.apiKey})
+                        if _r3.status_code == 200:
+                            log.warning(f"🗑️ Canceladas {len(_open)} órdenes abiertas (reconcile)")
+                    # Si no hay órdenes, no hacer nada (sin log = sin ruido)
             except Exception:
                 try:
                     open_orders = await self.exchange.fetch_open_orders(SYMBOL)
@@ -1214,22 +1317,16 @@ class Executor:
             if not db_trades:
                 return
 
-            # ── Marcar fantasmas (EJECUTADO sin posición en exchange) ──
+            # ── Verificación suave de fantasmas (solo informa, no cierra) ──
             for trade in db_trades:
                 trade_id = trade["id"]
                 side = trade["lado"]
-                # Si no hay posición del mismo lado en exchange
                 side_match = (side == real_side)
                 if not side_match or real_qty < 0.0005:
-                    log.warning(f"🔄 #{trade_id} {side} fantasma — marcando CLOSED_FORCE")
-                    with self.conn.cursor() as cur:
-                        cur.execute(
-                            "UPDATE hermes_trades SET estado = 'CLOSED_FORCE' WHERE id = %s AND estado = 'EJECUTADO'",
-                            (trade_id,),
-                        )
-                        if cur.rowcount > 0:
-                            self.conn.commit()
-                            log.info(f"📝 #{trade_id} marcado CLOSED_FORCE")
+                    log.info(f"📡 #{trade_id} {side}: no detectado en exchange — "
+                             f"check_sl_tp() se encargará del cierre si corresponde")
+            # NOTA: Ya no marcamos CLOSED_FORCE aquí. Solo check_sl_tp()
+            # y enforce_timeout() cierran posiciones activas.
 
         except Exception as e:
             log.warning(f"⚠️ Error en reconcile_positions: {e}")
@@ -1253,11 +1350,12 @@ class Executor:
 
                 self.connect_db()
                 with self.conn.cursor() as cur:
-                    # Buscar trade activo más reciente
+                    # Buscar trade activo que coincida con el lado de la posición real
                     cur.execute(
                         """SELECT id, pnl_realizado FROM hermes_trades
-                           WHERE estado = 'EJECUTADO'
-                           ORDER BY id DESC LIMIT 1"""
+                           WHERE estado = 'EJECUTADO' AND lado = %s
+                           ORDER BY id DESC LIMIT 1""",
+                        (side,)
                     )
                     row = cur.fetchone()
                     if row and (row[1] is None or abs(float(row[1]) - pnl) > 0.01):

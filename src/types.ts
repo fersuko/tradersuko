@@ -23,6 +23,7 @@ export type ModoSistema = 'SIMULACION' | 'DEMO' | 'REAL';
 export interface SystemConfig {
   umbralLiquidaciones: number;
   deltaCvd: number;
+  cvdTecho: number;
   leverage: number;
   margenOperacion: number;
   modoSistema: ModoSistema;

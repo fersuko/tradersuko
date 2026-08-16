@@ -42,7 +42,8 @@ export const Dashboard: React.FC = () => {
   // para que el autoguardado nunca pise la config del bot con valores viejos.
   const [config, setConfig] = useState<SystemConfig>({
     umbralLiquidaciones: 150000,
-    deltaCvd: 750000,
+    deltaCvd: 2000000,
+    cvdTecho: 25000000,
     leverage: 5,
     margenOperacion: 30,
     modoSistema: 'SIMULACION'

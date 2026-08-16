@@ -9,7 +9,8 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://100.91.150.1
 // 5x, margen 30%, umbrales 150K/750K (checkpoint v1.5: Liq $1.0M, CVD $1.2M).
 let localConfig: SystemConfig = {
   umbralLiquidaciones: 150000,
-  deltaCvd: 750000,
+  deltaCvd: 2000000,
+  cvdTecho: 25000000,
   leverage: 5,
   margenOperacion: 30,
   modoSistema: 'SIMULACION'
@@ -191,6 +192,7 @@ export const getConfig = async (): Promise<{ config: SystemConfig; isMocked: boo
     const config: SystemConfig = {
       umbralLiquidaciones: Number(source.umbralLiquidaciones ?? source.umbral_liquidaciones),
       deltaCvd: Number(source.deltaCvd ?? source.delta_cvd_confirmacion),
+      cvdTecho: Number(source.cvdTecho ?? source.cvd_techo ?? 25000000),
       leverage: Number(source.leverage ?? source.apalancamiento),
       margenOperacion: Number(source.margenOperacion ?? source.margen_operacion),
       modoSistema: (source.modoSistema as ModoSistema) || (source.modo_sistema as ModoSistema) || 'SIMULACION'
@@ -217,6 +219,7 @@ export const saveConfig = async (config: SystemConfig): Promise<{ success: boole
     const rawConfig = {
       umbral_liquidaciones: config.umbralLiquidaciones,
       delta_cvd_confirmacion: config.deltaCvd,
+      cvd_techo: config.cvdTecho,
       apalancamiento: config.leverage,
       margen_operacion: config.margenOperacion,
       modo_sistema: config.modoSistema
@@ -246,6 +249,7 @@ export const saveConfig = async (config: SystemConfig): Promise<{ success: boole
       localConfig = {
         umbralLiquidaciones: Number(source.umbralLiquidaciones ?? source.umbral_liquidaciones),
         deltaCvd: Number(source.deltaCvd ?? source.delta_cvd_confirmacion),
+        cvdTecho: Number(source.cvdTecho ?? source.cvd_techo ?? 25000000),
         leverage: Number(source.leverage ?? source.apalancamiento),
         margenOperacion: Number(source.margenOperacion ?? source.margen_operacion),
         modoSistema: (source.modoSistema as ModoSistema) || (source.modo_sistema as ModoSistema) || 'SIMULACION'

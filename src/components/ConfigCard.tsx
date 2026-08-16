@@ -105,12 +105,32 @@ export const ConfigCard: React.FC<ConfigCardProps> = ({
             <input
               type="range"
               min={100000}
-              max={2000000}
+              max={5000000}
               step={50000}
               value={config.deltaCvd}
               onChange={(e) => handleSliderChange('deltaCvd', Number(e.target.value))}
               className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-purple-400"
             />
+          </div>
+
+          {/* 2b. Techo CVD (v1.6: filtro de agotamiento) */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex justify-between items-center text-xs font-mono">
+              <span className="text-slate-400">Techo CVD (Agotamiento)</span>
+              <span className="text-fuchsia-400 font-bold">{formatUsd(config.cvdTecho)} USD</span>
+            </div>
+            <input
+              type="range"
+              min={5000000}
+              max={80000000}
+              step={1000000}
+              value={config.cvdTecho}
+              onChange={(e) => handleSliderChange('cvdTecho', Number(e.target.value))}
+              className="w-full h-1 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-fuchsia-400"
+            />
+            <span className="text-[8px] text-slate-600 font-mono">
+              CVD mayor a este valor = movimiento agotado. Bloquea LONG y SHORT (evita trampas de liquidez).
+            </span>
           </div>
 
           {/* 3. Apalancamiento / Leverage */}
