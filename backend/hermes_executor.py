@@ -73,7 +73,7 @@ EXECUTOR_INTERVAL = 30  # segundos entre ciclos
 MAX_TRADES_PER_DAY = 5
 SLIPPAGE_SL_PCT = Decimal("0.010")  # 1.0% del precio — más espacio para respirar (antes 0.5%)
 SLIPPAGE_TP_RATIO = Decimal("6.0")  # Take Profit = SL distancia × ratio (6.0 → 6.0%) — reward:risk 6:1
-MAX_POSITION_HOURS = 8  # horas máximas antes de cierre forzado (TP 3% necesita más tiempo)
+MAX_POSITION_HOURS = 16  # horas máximas antes de cierre forzado (v1.6.2: 8h -> 16h para dar aire al TP 6%; funding se monitorea aparte)
 
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -366,6 +366,7 @@ class Executor:
         cvd = float(row.get("cvd_binance", 0) or 0)
         depth_b = float(row.get("orderbook_depth_buyer", 0) or 0)
         depth_s = float(row.get("orderbook_depth_seller", 0) or 0)
+        funding = float(row.get("funding_rate", 0) or 0)  # v1.6.2: monitoreo de funding
 
         # Liquidaciones: ventana de 1 minuto (acumulado)
         liq_longs_1m, liq_shorts_1m = self.get_liquidations_last_minute()
@@ -377,8 +378,21 @@ class Executor:
         log.info(
             f"📊 Evaluando: CVD=${abs(cvd):,.0f} (umbral=${self.delta_cvd_confirmacion:,.0f}, techo=${self.cvd_techo:,.0f}) | "
             f"Liq 1m=${total_liq_1m:,.0f} (umbral=${self.umbral_liquidaciones:,.0f}) | "
-            f"Bids=${depth_b:,.0f} Asks=${depth_s:,.0f}"
+            f"Bids=${depth_b:,.0f} Asks=${depth_s:,.0f} | Funding={funding*100:.4f}%"
         )
+
+        # ── Filtro de Funding (v1.6.2) ─────────────────────
+        # Funding positivo extremo = longs pagan mucho (mercado sobre-comprado)
+        # Funding negativo extremo = shorts pagan mucho (mercado sobre-vendido)
+        # Con timeout 16h la posición cruza 1-2 períodos de funding, hay que filtrarlo.
+        FUNDING_EXTREMO = 0.001  # 0.1% por 8h
+        funding_bloquea_long = funding > FUNDING_EXTREMO
+        funding_bloquea_short = funding < -FUNDING_EXTREMO
+        if funding_bloquea_long or funding_bloquea_short:
+            log.info(
+                f"🚫 Funding extremo {funding*100:.4f}% — "
+                f"bloqueando {'LONG' if funding_bloquea_long else ''}{' y ' if funding_bloquea_long and funding_bloquea_short else ''}{'SHORT' if funding_bloquea_short else ''}"
+            )
 
         # ── Filtro de Techo CVD (v1.6) ─────────────────────
         # CVD extremo (> techo) = movimiento agotado / caza de liquidez.
@@ -432,6 +446,13 @@ class Executor:
             razones_long.append(f"Liq Shorts ${liq_shorts_1m:,.0f}")
 
         if condiciones_long >= 3:
+            # Filtro de funding: LONG caro con funding positivo extremo
+            if funding_bloquea_long:
+                log.info(
+                    f"🚫 Señal LONG ({condiciones_long}/3) BLOQUEADA por funding extremo — "
+                    f"{funding*100:.4f}% (pagarías por mantener)"
+                )
+                return None, None
             # Filtro de techo CVD: movimiento agotado, no entrar
             if cvd_exhausted:
                 log.info(
@@ -469,6 +490,13 @@ class Executor:
             razones_short.append(f"Liq Longs ${liq_longs_1m:,.0f}")
 
         if condiciones_short >= 3:
+            # Filtro de funding: SHORT caro con funding negativo extremo
+            if funding_bloquea_short:
+                log.info(
+                    f"🚫 Señal SHORT ({condiciones_short}/3) BLOQUEADA por funding extremo — "
+                    f"{funding*100:.4f}% (pagarías por mantener)"
+                )
+                return None, None
             # Filtro de techo CVD: movimiento agotado, no entrar
             if cvd_exhausted:
                 log.info(
