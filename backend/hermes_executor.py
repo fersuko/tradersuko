@@ -172,6 +172,9 @@ class Executor:
             # Cancelar órdenes STOP/TP huérfanas
             await self.cancel_stale_orders()
 
+            # v1.6.3: colocar SL nativo retroactivo si hay posición abierta sin proteger
+            await self.ensure_native_sl()
+
             return True
         except Exception as e:
             log.error(f"❌ Error conectando a {label}: {e}")
@@ -520,23 +523,118 @@ class Executor:
 
     # ── Cancelar órdenes abiertas al inicio ─────────────────
     async def cancel_stale_orders(self):
-        """Cancela órdenes STOP/TP huérfanas al iniciar."""
+        """Cancela órdenes STOP/TP huérfanas al iniciar.
+        v1.6.3: respeta el STOP_MARKET nativo de protección (closePosition=true)
+        para que el SL sobreviva a reinicios con posición abierta."""
         if not self.exchange:
             return
         try:
-            orders = await self.exchange.fetch_open_orders(SYMBOL)
-            if orders:
-                log.warning(f"🗑️ Cancelando {len(orders)} órdenes abiertas previas...")
-                for o in orders:
-                    try:
-                        await self.exchange.cancel_order(o["id"], SYMBOL)
-                        log.info(f"   ✅ Cancelada orden #{o['id']} ({o['type']} {o['side']})")
-                    except Exception as e:
-                        log.warning(f"   ⚠️ No se pudo cancelar #{o['id']}: {e}")
+            import requests as _req, time as _time
+            import hashlib as _hl, hmac as _hm, urllib.parse as _up
+            _ts = int(_time.time() * 1000)
+            _params = {"symbol": "BTCUSDT", "timestamp": _ts}
+            _qs = _up.urlencode(sorted(_params.items()))
+            _sig = _hm.new(self.exchange.secret.encode(), _qs.encode(), _hl.sha256).hexdigest()
+            _url = f"https://fapi.binance.com/fapi/v1/openOrders?{_qs}&signature={_sig}"
+            _r = _req.get(_url, headers={"X-MBX-APIKEY": self.exchange.apiKey}, timeout=10)
+            if _r.status_code == 200:
+                orders = _r.json()
+                if isinstance(orders, list) and len(orders) > 0:
+                    # Solo cancelar las que NO sean SL nativo de protección
+                    to_cancel = [
+                        o for o in orders
+                        if not (o.get("type") == "STOP_MARKET"
+                                and str(o.get("closePosition", "")).lower() == "true")
+                    ]
+                    protected = len(orders) - len(to_cancel)
+                    for o in to_cancel:
+                        try:
+                            await self.exchange.cancel_order(o["orderId"], SYMBOL)
+                            log.info(f"   ✅ Cancelada orden #{o['orderId']} ({o.get('type')} {o.get('side')})")
+                        except Exception as e:
+                            log.warning(f"   ⚠️ No se pudo cancelar #{o['orderId']}: {e}")
+                    if to_cancel:
+                        log.warning(f"🗑️ Canceladas {len(to_cancel)} órdenes previas, respetados {protected} SL nativo(s)")
+                    elif protected:
+                        log.info(f"✅ {protected} SL nativo(s) de protección respetado(s) al iniciar")
+                    else:
+                        log.info("✅ Sin órdenes abiertas previas — limpio")
+                else:
+                    log.info("✅ Sin órdenes abiertas previas — limpio")
             else:
-                log.info("✅ Sin órdenes abiertas previas — limpio")
+                # Fallback ccxt (no ve condicionales, pero mejor que nada)
+                orders = await self.exchange.fetch_open_orders(SYMBOL)
+                if orders:
+                    log.warning(f"🗑️ Cancelando {len(orders)} órdenes abiertas previas (fallback)...")
+                    for o in orders:
+                        try:
+                            await self.exchange.cancel_order(o["id"], SYMBOL)
+                        except Exception as e:
+                            log.warning(f"   ⚠️ No se pudo cancelar #{o['id']}: {e}")
+                else:
+                    log.info("✅ Sin órdenes abiertas previas — limpio")
         except Exception as e:
             log.warning(f"⚠️ Error cancelando órdenes: {e}")
+
+    async def ensure_native_sl(self):
+        """
+        v1.6.3: Al arrancar, si hay posición abierta en exchange y un trade EJECUTADO
+        en DB con stop_loss, pero NO hay STOP_MARKET nativo, lo coloca.
+        Protege posiciones abiertas antes de la v1.6.3 (ej: SHORT #4029).
+        """
+        if not self.exchange:
+            return
+        try:
+            # 1. ¿Hay posición real?
+            import requests as _req, time as _time
+            import hashlib as _hl, hmac as _hm, urllib.parse as _up
+            _ts = int(_time.time() * 1000)
+            _qs = f"symbol=BTCUSDT&timestamp={_ts}&recvWindow=10000"
+            _sig = _hm.new(self.exchange.secret.encode(), _qs.encode(), _hl.sha256).hexdigest()
+            _url = f"https://fapi.binance.com/fapi/v2/positionRisk?{_qs}&signature={_sig}"
+            _r = _req.get(_url, headers={"X-MBX-APIKEY": self.exchange.apiKey}, timeout=10)
+            pos_side = None
+            if _r.status_code == 200:
+                for _pos in _r.json():
+                    if abs(float(_pos.get("positionAmt", 0) or 0)) > 0.0005:
+                        pos_side = "SHORT" if float(_pos["positionAmt"]) < 0 else "LONG"
+                        break
+            if not pos_side:
+                return  # sin posición, nada que proteger
+
+            # 2. ¿Ya hay SL nativo? (no duplicar) — ver en ALGO orders, no openOrders
+            _ts2 = int(_time.time() * 1000)
+            _qs2 = f"symbol=BTCUSDT&timestamp={_ts2}"
+            _sig2 = _hm.new(self.exchange.secret.encode(), _qs2.encode(), _hl.sha256).hexdigest()
+            _url2 = f"https://fapi.binance.com/fapi/v1/openAlgoOrders?{_qs2}&signature={_sig2}"
+            _r2 = _req.get(_url2, headers={"X-MBX-APIKEY": self.exchange.apiKey}, timeout=10)
+            if _r2.status_code == 200:
+                _data2 = _r2.json()
+                _orders2 = _data2.get("orders", []) if isinstance(_data2, dict) else _data2
+                for _o in _orders2:
+                    if (_o.get("orderType") == "STOP_MARKET"
+                            and str(_o.get("closePosition", "")).lower() == "true"):
+                        log.info(f"✅ SL nativo ya existente para {pos_side} (algoId={_o.get('algoId')}) — sin cambios")
+                        return
+
+            # 3. Leer SL de la DB (trade EJECUTADO más reciente)
+            self.connect_db()
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT id, lado, stop_loss FROM hermes_trades "
+                    "WHERE estado = 'EJECUTADO' AND modo IN ('REAL','DEMO') "
+                    "ORDER BY id DESC LIMIT 1"
+                )
+                trade = cur.fetchone()
+            if not trade or not trade.get("stop_loss"):
+                log.warning(f"⚠️ Posición {pos_side} sin SL en DB — no se puede colocar SL nativo")
+                return
+
+            sl_price = float(trade["stop_loss"])
+            log.info(f"🛡️ Colocando SL nativo retroactivo para #{trade['id']} {trade['lado']} @ ${sl_price:.2f}")
+            await self.place_native_stop_market(trade["lado"], sl_price)
+        except Exception as e:
+            log.warning(f"⚠️ Error en ensure_native_sl: {e}")
 
     # ── Verificación de posición abierta ──────────────────────
     async def has_open_position(self, side: str) -> bool:
@@ -886,13 +984,104 @@ class Executor:
         return resultado
 
     # ── Stop-Loss ─────────────────────────────────────────────
+    async def place_native_stop_market(self, side: str, stop_price: float, trade_id: int = None):
+        """
+        v1.6.3: Coloca un STOP_MARKET NATIVO en Binance como red de seguridad.
+        Usa el endpoint de ALGO ORDERS (POST /fapi/v1/algoOrder) — desde nov-2025
+        las órdenes condicionales ya NO se aceptan en /fapi/v1/order (error -4120),
+        y por eso el código viejo las veía como 'algo orders invisibles'.
+        Parámetros clave: algoType=CONDITIONAL, triggerPrice (NO stopPrice).
+        closePosition=true → cierra TODA la posición al activarse (sin cantidad,
+        evitando el desastre de precisión 0.00414 vs 0.004).
+        El bot sigue monitoreando localmente (check_sl_tp), esto es el backstop
+        si el proceso muere o pierde conexión.
+        """
+        if not self.exchange:
+            log.warning("⚠️ No exchange para SL nativo — solo SL local")
+            return None
+        try:
+            import requests as _req, time as _time
+            import hashlib as _hl, hmac as _hm, urllib.parse as _up
+            side_binance = "SELL" if side == "LONG" else "BUY"
+            _ts = int(_time.time() * 1000)
+            _params = {
+                "algoType": "CONDITIONAL",
+                "symbol": "BTCUSDT",
+                "side": side_binance,
+                "type": "STOP_MARKET",
+                "triggerPrice": f"{stop_price:.1f}",
+                "closePosition": "true",
+                "workingType": "CONTRACT_PRICE",
+                "timestamp": _ts,
+                "recvWindow": "10000",
+            }
+            _qs = _up.urlencode(sorted(_params.items()))
+            _sig = _hm.new(self.exchange.secret.encode(), _qs.encode(), _hl.sha256).hexdigest()
+            _url = f"https://fapi.binance.com/fapi/v1/algoOrder?{_qs}&signature={_sig}"
+            _r = _req.post(_url, headers={"X-MBX-APIKEY": self.exchange.apiKey}, timeout=10)
+            if _r.status_code == 200:
+                _o = _r.json()
+                log.warning(
+                    f"🛡️ SL NATIVO colocado: STOP_MARKET {side} @ ${stop_price:.2f} "
+                    f"(algoId={_o.get('algoId')}) — red de seguridad en exchange"
+                )
+                return _o.get("algoId")
+            else:
+                log.warning(
+                    f"⚠️ Fallo SL nativo (HTTP {_r.status_code}): {_r.text[:150]} — "
+                    f"queda solo SL local"
+                )
+                return None
+        except Exception as e:
+            log.warning(f"⚠️ Error colocando SL nativo: {e} — queda solo SL local")
+            return None
+
+    async def cancel_native_stop(self, side: str):
+        """
+        v1.6.3: Cancela la orden STOP_MARKET de protección del lado indicado.
+        Se usa antes de recolocar el SL (trailing/break-even) y al cerrar.
+        Usa el endpoint de Algo Orders (las condicionales NO aparecen en openOrders).
+        """
+        if not self.exchange:
+            return
+        try:
+            import requests as _req, time as _time
+            import hashlib as _hl, hmac as _hm, urllib.parse as _up
+            _ts = int(_time.time() * 1000)
+            _params = {"symbol": "BTCUSDT", "timestamp": _ts, "recvWindow": "10000"}
+            _qs = _up.urlencode(sorted(_params.items()))
+            _sig = _hm.new(self.exchange.secret.encode(), _qs.encode(), _hl.sha256).hexdigest()
+            _url = f"https://fapi.binance.com/fapi/v1/openAlgoOrders?{_qs}&signature={_sig}"
+            _r = _req.get(_url, headers={"X-MBX-APIKEY": self.exchange.apiKey}, timeout=10)
+            if _r.status_code != 200:
+                log.warning(f"⚠️ No se pudo listar algo orders para cancelar SL: {_r.text[:120]}")
+                return
+            _data = _r.json()
+            _orders = _data.get("orders", []) if isinstance(_data, dict) else _data
+            for _o in _orders:
+                if (_o.get("orderType") == "STOP_MARKET"
+                        and str(_o.get("closePosition", "")).lower() == "true"):
+                    _aid = _o["algoId"]
+                    _ts2 = int(_time.time() * 1000)
+                    _p2 = {"symbol": "BTCUSDT", "algoId": _aid, "timestamp": _ts2}
+                    _qs2 = _up.urlencode(sorted(_p2.items()))
+                    _sig2 = _hm.new(self.exchange.secret.encode(), _qs2.encode(), _hl.sha256).hexdigest()
+                    _url2 = f"https://fapi.binance.com/fapi/v1/algoOrder?{_qs2}&signature={_sig2}"
+                    _r2 = _req.delete(_url2, headers={"X-MBX-APIKEY": self.exchange.apiKey}, timeout=10)
+                    if _r2.status_code == 200:
+                        log.info(f"🗑️ SL nativo anterior cancelado (algoId={_aid})")
+                    else:
+                        log.warning(f"⚠️ No se pudo cancelar SL nativo {_aid}: {_r2.text[:100]}")
+        except Exception as e:
+            log.warning(f"⚠️ Error cancelando SL nativo: {e}")
+
     async def place_stop_loss(
         self, side: str, cantidad_btc: float, precio_entrada: float
     ):
         """
-        Registra el precio de STOP-LOSS en DB solamente.
-        check_sl_tp() monitorea LOCALMENTE y cierra con market order.
-        (No se coloca orden en Binance para evitar condicionales huérfanas.)
+        Registra el precio de STOP-LOSS en DB y coloca STOP_MARKET nativo en Binance.
+        check_sl_tp() monitorea LOCALMENTE como enforcement principal (30s),
+        y el STOP_MARKET nativo es la red de seguridad si el bot muere.
         """
         try:
             if side == "LONG":
@@ -922,6 +1111,12 @@ class Executor:
                 "STOP_LOSS_SET",
                 f"🛡️ SL {side} @ ${stop_price:.2f} (local)",
             )
+
+            # v1.6.3: Colocar STOP_MARKET nativo como red de seguridad en Binance
+            try:
+                await self.place_native_stop_market(side, stop_price)
+            except Exception as e:
+                log.warning(f"⚠️ Error en SL nativo: {e}")
 
             import time as _t
             self.last_sl_time = _t.time()
@@ -1029,8 +1224,14 @@ class Executor:
                 self.conn.commit()
             log.info(f"📝 SL #{trade_id} actualizado en BD: ${new_sl_price:.2f}")
 
-            # 2. NO colocar en Binance (check_sl_tp() maneja localmente)
-            log.info(f"📝 SL #{trade_id} local — check_sl_tp() lo monitoreará en cada ciclo")
+            # 2. v1.6.3: Recolocar SL NATIVO en Binance (trailing/break-even)
+            # Cancelar el anterior y colocar el nuevo con el precio actualizado.
+            # Si falla, el SL local sigue protegiendo (check_sl_tp).
+            try:
+                await self.cancel_native_stop(side)
+                await self.place_native_stop_market(side, new_sl_price)
+            except Exception as e:
+                log.warning(f"⚠️ Error recolocando SL nativo: {e} — queda SL local")
 
             self.insert_alerta(
                 "SL_UPDATED",
@@ -1071,6 +1272,16 @@ class Executor:
                 else:
                     log.warning(f"⚠️ Fallback a fetch_open_orders (status {_r.status_code})")
                     raise Exception("REST falló, usando ccxt")
+
+                # v1.6.3: Cancelar también los ALGO orders (SL nativo) — endpoint separado
+                _ts_a = int(_time.time() * 1000)
+                _params_a = {"symbol": "BTCUSDT", "timestamp": _ts_a}
+                _qs_a = _up.urlencode(sorted(_params_a.items()))
+                _sig_a = _hm.new(self.exchange.secret.encode(), _qs_a.encode(), _hl.sha256).hexdigest()
+                _url_a = f"https://fapi.binance.com/fapi/v1/algoOpenOrders?{_qs_a}&signature={_sig_a}"
+                _r_a = _req.delete(_url_a, headers={"X-MBX-APIKEY": self.exchange.apiKey})
+                if _r_a.status_code == 200:
+                    log.warning("🗑️ Algo orders (SL nativo) cancelados al cerrar posición")
             except Exception:
                 # Fallback: ccxt (no ve condicionales pero mejor que nada)
                 try:
@@ -1274,7 +1485,11 @@ class Executor:
                 except Exception as e2:
                     log.warning(f"⚠️ Error leyendo posición: {e2}")
 
-            # ── Cancelar SOLO si hay órdenes abiertas (evita spam y rate limits) ──
+            # ── Cancelar SOLO órdenes de entrada huérfanas (v1.6.3) ──
+            # ⚠️ ANTES cancelaba TODAS (allOpenOrders DELETE) — eso mataba el
+            # STOP_MARKET nativo de protección y causaba el loop de huérfanas.
+            # Ahora: cancela solo órdenes que NO sean nuestro SL de protección
+            # (STOP_MARKET con closePosition=true se respeta SIEMPRE).
             try:
                 import requests as _req2, time as _time2
                 import hashlib as _hl2, hmac as _hm2, urllib.parse as _up2
@@ -1282,20 +1497,30 @@ class Executor:
                 _p2 = {"symbol": "BTCUSDT", "timestamp": _ts2}
                 _qs2 = _up2.urlencode(sorted(_p2.items()))
                 _sig2 = _hm2.new(self.exchange.secret.encode(), _qs2.encode(), _hl2.sha256).hexdigest()
-                _url2 = f"https://fapi.binance.com/fapi/v1/allOpenOrders?{_qs2}&signature={_sig2}"
-                _r2 = _req2.get(_url2, headers={"X-MBX-APIKEY": self.exchange.apiKey})
+                _url2 = f"https://fapi.binance.com/fapi/v1/openOrders?{_qs2}&signature={_sig2}"
+                _r2 = _req2.get(_url2, headers={"X-MBX-APIKEY": self.exchange.apiKey}, timeout=10)
                 if _r2.status_code == 200:
                     _open = _r2.json()
                     if isinstance(_open, list) and len(_open) > 0:
-                        # Hay órdenes abiertas → cancelarlas
-                        _ts3 = int(_time2.time() * 1000)
-                        _p3 = {"symbol": "BTCUSDT", "timestamp": _ts3}
-                        _qs3 = _up2.urlencode(sorted(_p3.items()))
-                        _sig3 = _hm2.new(self.exchange.secret.encode(), _qs3.encode(), _hl2.sha256).hexdigest()
-                        _url3 = f"https://fapi.binance.com/fapi/v1/allOpenOrders?{_qs3}&signature={_sig3}"
-                        _r3 = _req2.delete(_url3, headers={"X-MBX-APIKEY": self.exchange.apiKey})
-                        if _r3.status_code == 200:
-                            log.warning(f"🗑️ Canceladas {len(_open)} órdenes abiertas (reconcile)")
+                        # Filtrar: solo cancelar órdenes que NO sean SL nativo
+                        _to_cancel = [
+                            o for o in _open
+                            if not (o.get("type") == "STOP_MARKET"
+                                    and str(o.get("closePosition", "")).lower() == "true")
+                        ]
+                        _protected = len(_open) - len(_to_cancel)
+                        for _o in _to_cancel:
+                            _ts3 = int(_time2.time() * 1000)
+                            _p3 = {"symbol": "BTCUSDT", "orderId": _o["orderId"], "timestamp": _ts3}
+                            _qs3 = _up2.urlencode(sorted(_p3.items()))
+                            _sig3 = _hm2.new(self.exchange.secret.encode(), _qs3.encode(), _hl2.sha256).hexdigest()
+                            _url3 = f"https://fapi.binance.com/fapi/v1/order?{_qs3}&signature={_sig3}"
+                            _r3 = _req2.delete(_url3, headers={"X-MBX-APIKEY": self.exchange.apiKey}, timeout=10)
+                            if _r3.status_code == 200:
+                                log.info(f"🗑️ Cancelada orden huérfana {_o['orderId']} ({_o.get('type')})")
+                        if _to_cancel:
+                            log.warning(f"🗑️ Reconcile: canceladas {len(_to_cancel)} órdenes huérfanas, respetadas {_protected} SL nativo(s)")
+                        # Si solo había SL nativos, no hacer nada (sin ruido)
                     # Si no hay órdenes, no hacer nada (sin log = sin ruido)
             except Exception:
                 try:
