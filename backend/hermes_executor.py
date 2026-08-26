@@ -408,20 +408,24 @@ class Executor:
             )
 
         # ── Filtro de Tendencia VWAP ──────────────────────
-        # Si el precio está sobre el VWAP → sesgo alcista (solo LONG)
-        # Si el precio está bajo el VWAP → sesgo bajista (solo SHORT)
+        # v1.6.4: VWAP ASIMÉTRICO — LONG con VWAP 5min (permisivo),
+        # SHORT con VWAP 15min (estricto). El VWAP 5min dejaba pasar
+        # SHORTs trampa en micro-retrocesos de rallies alcistas
+        # (SHORT WR 37% vs LONG 60% en ago-2026). SHORT solo cuando
+        # la tendencia bajista está confirmada a 15 minutos.
         trend = None  # None = sin restricción, "LONG_ONLY" o "SHORT_ONLY"
         if self.trend_filter_enabled:
-            vwap = self.get_vwap(lookback_minutes=5)
-            if vwap is not None:
-                if precio > vwap:
-                    trend = "LONG_ONLY"
-                    log.info(f"📈 Tendencia ALCISTA: precio ${precio:.2f} > VWAP ${vwap:.2f} — solo LONG permitido")
-                elif precio < vwap:
+            vwap_5 = self.get_vwap(lookback_minutes=5)
+            vwap_15 = self.get_vwap(lookback_minutes=15)
+            if vwap_5 is not None and vwap_15 is not None:
+                if precio < vwap_15:
                     trend = "SHORT_ONLY"
-                    log.info(f"📉 Tendencia BAJISTA: precio ${precio:.2f} < VWAP ${vwap:.2f} — solo SHORT permitido")
+                    log.info(f"📉 Tendencia BAJISTA (VWAP15 ${vwap_15:.2f}): precio ${precio:.2f} — solo SHORT permitido")
+                elif precio > vwap_5:
+                    trend = "LONG_ONLY"
+                    log.info(f"📈 Tendencia ALCISTA (VWAP5 ${vwap_5:.2f}): precio ${precio:.2f} — solo LONG permitido")
                 else:
-                    log.info(f"📊 Tendencia NEUTRA: precio ${precio:.2f} ≈ VWAP ${vwap:.2f}")
+                    log.info(f"📊 Tendencia MIXTA: VWAP5 ${vwap_5:.2f} / VWAP15 ${vwap_15:.2f} — sin restricción")
             else:
                 log.info("📊 VWAP no disponible — filtro de tendencia desactivado temporalmente")
         else:
