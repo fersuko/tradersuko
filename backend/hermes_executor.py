@@ -409,23 +409,24 @@ class Executor:
 
         # ── Filtro de Tendencia VWAP ──────────────────────
         # v1.6.4: VWAP ASIMÉTRICO — LONG con VWAP 5min (permisivo),
-        # SHORT con VWAP 15min (estricto). El VWAP 5min dejaba pasar
-        # SHORTs trampa en micro-retrocesos de rallies alcistas
-        # (SHORT WR 37% vs LONG 60% en ago-2026). SHORT solo cuando
-        # la tendencia bajista está confirmada a 15 minutos.
+        # v1.6.5 (02-sep-2026): filtro SIMÉTRICO con VWAP 15min para ambos lados.
+        # v1.6.4 hizo SHORT con VWAP15 (estricto) y dejó LONG con VWAP5 (permisivo) —
+        # los SHORTs dejaron de sangrar (WR 62% desde 28-ago) pero los LONGs entraron
+        # en condiciones débiles y se cerraban forzados (CLOSED_FORCE, neto -$12.7).
+        # Ahora LONG y SHORT exigen confirmación de tendencia a 15 minutos.
         trend = None  # None = sin restricción, "LONG_ONLY" o "SHORT_ONLY"
         if self.trend_filter_enabled:
             vwap_5 = self.get_vwap(lookback_minutes=5)
             vwap_15 = self.get_vwap(lookback_minutes=15)
-            if vwap_5 is not None and vwap_15 is not None:
+            if vwap_15 is not None:
                 if precio < vwap_15:
                     trend = "SHORT_ONLY"
                     log.info(f"📉 Tendencia BAJISTA (VWAP15 ${vwap_15:.2f}): precio ${precio:.2f} — solo SHORT permitido")
-                elif precio > vwap_5:
+                elif precio > vwap_15:
                     trend = "LONG_ONLY"
-                    log.info(f"📈 Tendencia ALCISTA (VWAP5 ${vwap_5:.2f}): precio ${precio:.2f} — solo LONG permitido")
+                    log.info(f"📈 Tendencia ALCISTA (VWAP15 ${vwap_15:.2f}): precio ${precio:.2f} — solo LONG permitido (v1.6.5 simétrico)")
                 else:
-                    log.info(f"📊 Tendencia MIXTA: VWAP5 ${vwap_5:.2f} / VWAP15 ${vwap_15:.2f} — sin restricción")
+                    log.info(f"📊 Precio en VWAP15 ${vwap_15:.2f} — sin restricción (caso límite)")
             else:
                 log.info("📊 VWAP no disponible — filtro de tendencia desactivado temporalmente")
         else:
