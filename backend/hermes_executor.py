@@ -409,11 +409,10 @@ class Executor:
 
         # ── Filtro de Tendencia VWAP ──────────────────────
         # v1.6.4: VWAP ASIMÉTRICO — LONG con VWAP 5min (permisivo),
-        # v1.6.5 (02-sep-2026): filtro SIMÉTRICO con VWAP 15min para ambos lados.
-        # v1.6.4 hizo SHORT con VWAP15 (estricto) y dejó LONG con VWAP5 (permisivo) —
-        # los SHORTs dejaron de sangrar (WR 62% desde 28-ago) pero los LONGs entraron
-        # en condiciones débiles y se cerraban forzados (CLOSED_FORCE, neto -$12.7).
-        # Ahora LONG y SHORT exigen confirmación de tendencia a 15 minutos.
+        # v1.6.6 (03-sep-2026): PURO LONG — SHORTs deshabilitados por decisión de
+        # Fersuko (un SHORT quedó colgado contra el rebote y bloqueaba los LONGs).
+        # En tendencia bajista el bot espera flat hasta que gire alcista.
+        # v1.6.5: filtro SIMÉTRICO con VWAP 15min para ambos lados (LONG ya no usaba VWAP5).
         trend = None  # None = sin restricción, "LONG_ONLY" o "SHORT_ONLY"
         if self.trend_filter_enabled:
             vwap_5 = self.get_vwap(lookback_minutes=5)
@@ -424,7 +423,7 @@ class Executor:
                     log.info(f"📉 Tendencia BAJISTA (VWAP15 ${vwap_15:.2f}): precio ${precio:.2f} — solo SHORT permitido")
                 elif precio > vwap_15:
                     trend = "LONG_ONLY"
-                    log.info(f"📈 Tendencia ALCISTA (VWAP15 ${vwap_15:.2f}): precio ${precio:.2f} — solo LONG permitido (v1.6.5 simétrico)")
+                    log.info(f"📈 Tendencia ALCISTA (VWAP15 ${vwap_15:.2f}): precio ${precio:.2f} — solo LONG permitido (v1.6.6 puro LONG)")
                 else:
                     log.info(f"📊 Precio en VWAP15 ${vwap_15:.2f} — sin restricción (caso límite)")
             else:
@@ -498,6 +497,11 @@ class Executor:
             razones_short.append(f"Liq Longs ${liq_longs_1m:,.0f}")
 
         if condiciones_short >= 3:
+            # v1.6.6 (03-sep-2026): PURO LONG — SHORTs deshabilitados (decisión Fersuko).
+            # Los SHORTs restaban fuerza a los LONGs y dejaban posiciones colgadas contra
+            # la tendencia (SHORT #4104 bloqueó los LONGs durante el rebote). Ignorar.
+            log.info(f"🚫 SHORTs deshabilitados (v1.6.6 puro LONG) — señal SHORT ({condiciones_short}/3) ignorada")
+            return None, None
             # Filtro de funding: SHORT caro con funding negativo extremo
             if funding_bloquea_short:
                 log.info(
