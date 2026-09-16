@@ -410,6 +410,11 @@ class Executor:
         # ── Filtro de Tendencia VWAP ──────────────────────
         # v1.6.4: VWAP ASIMÉTRICO — LONG con VWAP 5min (permisivo),
         # v1.6.6 (03-sep-2026): PURO LONG — SHORTs deshabilitados por decisión de
+        # v1.6.7 (16-sep-2026): JOURNAL CIEGO ARREGLADO — cuando el SL/TP nativo
+        # cierra la posición, ahora se recupera el PnL REAL desde la income API de
+        # Binance (REALIZED_PNL + COMMISSION + FUNDING_FEE) en vez de dejar NULL.
+        # Los 7 trades del 12-15 sep quedaron con pnl_realizado=NULL (-$9.18 sin
+        # trazabilidad); reparados retroactivamente.
         # Fersuko (un SHORT quedó colgado contra el rebote y bloqueaba los LONGs).
         # En tendencia bajista el bot espera flat hasta que gire alcista.
         # v1.6.5: filtro SIMÉTRICO con VWAP 15min para ambos lados (LONG ya no usaba VWAP5).
@@ -1252,6 +1257,89 @@ class Executor:
             log.error(f"❌ Error actualizando SL #{trade_id}: {e}")
             return False
 
+    # ── v1.6.7: PnL REAL desde la income API de Binance ────────
+    async def _fetch_realized_pnl_since(self, since_ts_ms):
+        """Lee el PnL REALIZADO neto desde Binance (REALIZED_PNL + COMMISSION +
+        FUNDING_FEE) a partir de un timestamp en ms.
+
+        Se usa cuando la posición la cerró el SL/TP NATIVO (algo order): el bot
+        no tiene fill_price propio, pero Binance SÍ registró el resultado real.
+        """
+        if not self.exchange or not since_ts_ms:
+            return None
+        try:
+            income = await self.exchange.fapiPrivateGetIncome({
+                "symbol": SYMBOL.replace("/", ""),
+                "startTime": int(since_ts_ms),
+                "limit": 1000,
+            })
+        except Exception as e:
+            log.warning(f"⚠️ income API no disponible: {str(e)[:90]}")
+            return None
+        if not isinstance(income, list) or not income:
+            return None
+        total, found = 0.0, False
+        for it in income:
+            itype = (it.get("incomeType") or "").upper()
+            if itype in ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE"):
+                total += float(it.get("income", 0) or 0)
+                found = True
+        return round(total, 4) if found else None
+
+    async def close_trade_with_real_pnl(self, trade_id: int, motivo: str = ""):
+        """v1.6.7: Marca un trade como CLOSED_FORCE recuperando el PnL REAL de
+        Binance (income API) desde su timestamp de apertura.
+
+        Antes: cuando el SL/TP nativo cerraba la posición, el bot recibía
+        'ReduceOnly rejected' y marcaba CLOSED_FORCE con pnl_realizado=NULL
+        (journal ciego). Ahora se recupera el resultado neto real.
+        """
+        try:
+            self.connect_db()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT EXTRACT(EPOCH FROM timestamp)*1000, balance_antes FROM hermes_trades WHERE id = %s",
+                    (trade_id,),
+                )
+                row = cur.fetchone()
+            if not row:
+                return False
+            since_ms = int(row[0]) if row[0] is not None else None
+            bal_antes = float(row[1]) if row[1] is not None else 0.0
+
+            pnl = await self._fetch_realized_pnl_since(since_ms)
+
+            self.connect_db()
+            with self.conn.cursor() as cur:
+                if pnl is not None:
+                    bal_desp = round(bal_antes + pnl, 2) if bal_antes > 0 else None
+                    cur.execute(
+                        "UPDATE hermes_trades SET estado = 'CLOSED_FORCE', "
+                        "pnl_realizado = %s, balance_despues = %s "
+                        "WHERE id = %s AND estado = 'EJECUTADO'",
+                        (round(pnl, 2), bal_desp, trade_id),
+                    )
+                    if cur.rowcount == 0:
+                        log.info(f"ℹ️ Trade #{trade_id} ya estaba cerrado — no se re-procesa")
+                    else:
+                        log.info(
+                            f"📝 Trade #{trade_id} cerrado con PnL REAL de Binance: {pnl:+.2f} USDT "
+                            f"| balance {bal_antes:.2f} → {bal_antes + pnl:.2f} | {motivo}"
+                        )
+                else:
+                    cur.execute(
+                        "UPDATE hermes_trades SET estado = 'CLOSED_FORCE' "
+                        "WHERE id = %s AND estado = 'EJECUTADO'",
+                        (trade_id,),
+                    )
+                    if cur.rowcount > 0:
+                        log.info(f"📝 Trade #{trade_id} marcado CLOSED_FORCE (sin datos de PnL en Binance) | {motivo}")
+            self.conn.commit()
+            return True
+        except Exception as e:
+            log.warning(f"⚠️ Error cerrando trade #{trade_id} con PnL real: {e}")
+            return False
+
     async def force_close_position(self, trade_id: int, side: str, amount: float, reason: str):
         """
         Cierra una posición forzadamente con orden de mercado.
@@ -1344,19 +1432,9 @@ class Executor:
                 err_str = str(close_err)
                 # Si el error es "ReduceOnly Order is rejected", la posición ya no existe
                 if "ReduceOnly" in err_str or "-2022" in err_str:
-                    log.warning(f"⚠️ Posición #{trade_id} ya no existe en exchange (ReduceOnly rejected) — solo se marca en BD")
-                    # Marcar como cerrado en BD porque la posición ya no existe
-                    try:
-                        self.connect_db()
-                        with self.conn.cursor() as cur:
-                            cur.execute(
-                                "UPDATE hermes_trades SET estado = 'CLOSED_FORCE', balance_despues = balance_antes + COALESCE(pnl_realizado, 0) WHERE id = %s",
-                                (trade_id,),
-                            )
-                        self.conn.commit()
-                        log.info(f"📝 Trade #{trade_id} marcado como CLOSED_FORCE en DB (posición expirada)")
-                    except Exception as e:
-                        log.warning(f"⚠️ Error actualizando estado en DB: {e}")
+                    log.warning(f"⚠️ Posición #{trade_id} ya no existe en exchange (ReduceOnly rejected) — recuperando PnL real de Binance")
+                    # v1.6.7: el SL/TP nativo cerró la posición → leer PnL real del income API
+                    await self.close_trade_with_real_pnl(trade_id, f"SL/TP nativo — {reason}")
                     return False
                 else:
                     # Error REAL de cierre: NO marcar CLOSED_FORCE para evitar posiciones fantasma
@@ -1375,15 +1453,8 @@ class Executor:
                                 if pos_side == side:
                                     log.warning(f"⚠️ Posición sigue activa en exchange: {abs(contracts):.3f} BTC {side} — manteniendo EJECUTADO en DB")
                                     return False
-                        # Si no hay posición, marcar como cerrado
-                        self.connect_db()
-                        with self.conn.cursor() as cur:
-                            cur.execute(
-                                "UPDATE hermes_trades SET estado = 'CLOSED_FORCE', balance_despues = balance_antes + COALESCE(pnl_realizado, 0) WHERE id = %s",
-                                (trade_id,),
-                            )
-                        self.conn.commit()
-                        log.info(f"📝 Trade #{trade_id} marcado como CLOSED_FORCE en DB (posición ya no existe en exchange)")
+                        # Si no hay posición, marcar como cerrado (v1.6.7: recuperando PnL real de Binance)
+                        await self.close_trade_with_real_pnl(trade_id, f"Posición ya no existe — {reason}")
                     except Exception as e2:
                         log.warning(f"⚠️ Error verificando posición en exchange: {e2}")
                     return False
@@ -1399,6 +1470,7 @@ class Executor:
             )
 
             # Marcar el trade como cerrado en DB + calcular PnL REAL
+            _pnl_guardado = False
             try:
                 self.connect_db()
                 with self.conn.cursor() as cur:
@@ -1415,25 +1487,20 @@ class Executor:
                     if _entry > 0 and fill_price > 0:
                         _pnl_real = (fill_price - _entry) * real_amount if side == "LONG" \
                                     else (_entry - fill_price) * real_amount
-                    else:
-                        _pnl_real = None
-
-                    if _pnl_real is not None and _bal_antes > 0:
                         cur.execute(
                             "UPDATE hermes_trades SET estado = 'CLOSED_FORCE', "
                             "pnl_realizado = %s, balance_despues = %s WHERE id = %s",
-                            (round(_pnl_real, 2), round(_bal_antes + _pnl_real, 2), trade_id),
+                            (round(_pnl_real, 2), round(_bal_antes + _pnl_real, 2) if _bal_antes > 0 else None, trade_id),
                         )
                         log.info(f"📝 Trade #{trade_id} cerrado: PnL real {_pnl_real:+.2f} USDT (entry={_entry:.2f} fill={fill_price:.2f})")
-                    else:
-                        cur.execute(
-                            "UPDATE hermes_trades SET estado = 'CLOSED_FORCE' WHERE id = %s",
-                            (trade_id,),
-                        )
-                        log.info(f"📝 Trade #{trade_id} marcado como CLOSED_FORCE en DB (sin datos de PnL)")
+                        _pnl_guardado = True
                 self.conn.commit()
             except Exception as e:
                 log.warning(f"⚠️ Error actualizando estado en DB: {e}")
+
+            # v1.6.7: si no hubo fill_price/entry → recuperar el PnL real desde Binance
+            if not _pnl_guardado:
+                await self.close_trade_with_real_pnl(trade_id, reason)
 
             return True
 
@@ -1863,16 +1930,9 @@ class Executor:
                                     pos_activa = True
                                     break
                         if not pos_activa:
-                            log.warning(f"⚠️ Trade #{trade_id} {side} ya no tiene posición en exchange — saltando gestión")
-                            # Marcar como cerrado en BD si el brain cree que está activo
-                            with self.conn.cursor() as cur:
-                                cur.execute(
-                                    "UPDATE hermes_trades SET estado = 'CLOSED_FORCE' WHERE id = %s AND estado = 'EJECUTADO'",
-                                    (trade_id,),
-                                )
-                                if cur.rowcount > 0:
-                                    self.conn.commit()
-                                    log.info(f"📝 Trade #{trade_id} marcado como CLOSED_FORCE en DB (fantasma detectado)")
+                            log.warning(f"⚠️ Trade #{trade_id} {side} ya no tiene posición en exchange — recuperando PnL real de Binance")
+                            # v1.6.7: leer PnL real de Binance antes de marcar cerrado
+                            await self.close_trade_with_real_pnl(trade_id, "Fantasma — posición cerrada en exchange")
                             continue
                     except Exception as e:
                         log.warning(f"⚠️ No se pudo verificar posición en exchange: {e}")
