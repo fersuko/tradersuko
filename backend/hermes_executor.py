@@ -1359,11 +1359,18 @@ class Executor:
             # -10s: la comisión de apertura se registra en el mismo segundo (a veces
             # unos ms ANTES del timestamp que guardamos en DB).
             ventana_desde = since_ms - 10_000
-            # Cota: apertura + MAX_POSITION_HOURS + 2h de holgura (nunca debería superarlo)
-            ventana_hasta = since_ms + int((MAX_POSITION_HOURS + 2) * 3600 * 1000)
+            # Cota superior: la apertura del SIGUIENTE trade es el límite EXACTO — el bot
+            # mantiene una sola posición, así que este trade cerró antes de que abriera el
+            # siguiente. Si no hay siguiente, se usa "ahora".
+            # v1.6.9: antes se usaba min(apertura + MAX_POSITION_HOURS + 2h, siguiente).
+            # Ese tope de tiempo era un BUG: el trade #4116 vivió 25.7 h (>18 h), la
+            # ventana se cortaba ANTES del cierre real y el PnL salía mal (-0.24 en vez
+            # de +3.43). El tope estorbaba y no protegía de nada, porque la cota del
+            # siguiente trade ya es exacta.
             if _nxt and _nxt[0] is not None:
-                # -1s: excluir la comisión de apertura del siguiente trade
-                ventana_hasta = min(ventana_hasta, int(_nxt[0]) - 1_000)
+                ventana_hasta = int(_nxt[0]) - 1_000
+            else:
+                ventana_hasta = int(time.time() * 1000)
 
             pnl = await self._fetch_realized_pnl_since(ventana_desde, ventana_hasta, intentos=intentos)
 
