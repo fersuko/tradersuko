@@ -1945,8 +1945,10 @@ class Executor:
         """
         try:
             self.connect_db()
-
-            # Conectar exchange si hace falta (para acciones de gestión)
+            # v1.6.10: recordar alertas ya procesadas. Antes se re-leían CADA ciclo
+            # durante 1 hora y se re-aplicaba el SL una y otra vez.
+            if not hasattr(self, "_mgmt_procesadas"):
+                self._mgmt_procesadas = set()
             if not self.exchange and self.modo_sistema in ("REAL", "DEMO"):
                 connected = await self.connect_exchange()
                 if not connected:
@@ -1980,6 +1982,8 @@ class Executor:
                     deduped.append(alert)
 
             for alert in deduped:
+                if alert["id"] in self._mgmt_procesadas:
+                    continue
                 alert_type = alert["tipo"]
                 msg = alert["mensaje"]
 
@@ -2013,13 +2017,29 @@ class Executor:
                 # Obtener datos del trade para cantidad y lado
                 cur = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
                 cur.execute(
-                    "SELECT id, lado, cantidad_btc FROM hermes_trades WHERE id = %s",
+                    "SELECT id, lado, cantidad_btc, estado FROM hermes_trades WHERE id = %s",
                     (trade_id,),
                 )
                 trade = cur.fetchone()
                 cur.close()
 
                 if not trade:
+                    continue
+
+                # ── v1.6.10: GUARDA CRÍTICA ─────────────────────────────────────
+                # Una alerta de gestión SOLO es válida si su trade sigue ABIERTO.
+                # Bug encontrado el 18-sep: una alerta vieja (MGMT_TRAILING_SL de
+                # #4118, ya cerrado) se aplicaba a la posición NUEVA (#4119) porque
+                # el chequeo de "¿existe posición del mismo lado?" daba FALSO
+                # POSITIVO: cualquier LONG abierto lo satisfacía. Consecuencia: el
+                # trade nuevo heredaba el SL del anterior (SL $80,018.55 en una
+                # entrada de $80,151.10 = −0.17%) y podía salir por puro ruido.
+                if trade["estado"] != "EJECUTADO":
+                    log.info(
+                        f"⏭️ Alerta {alert_type} #{trade_id} ignorada — el trade ya no está "
+                        f"abierto (estado={trade['estado']})"
+                    )
+                    self._mgmt_procesadas.add(alert["id"])
                     continue
 
                 side = trade["lado"]
@@ -2060,6 +2080,9 @@ class Executor:
                         trade_id, side, amount,
                         f"Time-Out ({MAX_POSITION_HOURS}h alcanzado)"
                     )
+
+                # v1.6.10: marcar la alerta como procesada para no re-aplicarla cada ciclo
+                self._mgmt_procesadas.add(alert["id"])
 
         except Exception as e:
             log.warning(f"⚠️ Error en check_position_mgmt: {e}")
