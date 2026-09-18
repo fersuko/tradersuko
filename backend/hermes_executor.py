@@ -53,6 +53,11 @@ DB_CONFIG = {
 }
 
 SYMBOL = os.getenv("SYMBOL", "BTC/USDT:USDT")
+# v1.6.8: SYMBOL está en formato ccxt ('BTC/USDT:USDT'); las APIs REST crudas de Binance
+# (income, positionRisk, etc.) necesitan el formato nativo ('BTCUSDT'). El bug que dejó
+# el journal ciego desde v1.6.7: SYMBOL.replace("/", "") producía 'BTCUSDT:USDT' →
+# la income API devolvía {"code":-1121,"msg":"Invalid symbol."} y el PnL quedaba NULL.
+BINANCE_SYMBOL = SYMBOL.split(":")[0].replace("/", "")
 EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY", "")
 EXCHANGE_SECRET = os.getenv("EXCHANGE_SECRET", "")
 EXCHANGE_API_KEY_DEMO = os.getenv("EXCHANGE_API_KEY_DEMO", "")
@@ -415,6 +420,12 @@ class Executor:
         # Binance (REALIZED_PNL + COMMISSION + FUNDING_FEE) en vez de dejar NULL.
         # Los 7 trades del 12-15 sep quedaron con pnl_realizado=NULL (-$9.18 sin
         # trazabilidad); reparados retroactivamente.
+        # v1.6.8 (17-sep-2026): cierre del hueco de v1.6.7 — el trade #4115 volvió a
+        # quedar en NULL porque la income API devolvió vacío ~20s tras el fill
+        # (indexado asíncrono) y porque sin `endTime` la ventana se extendía a trades
+        # posteriores. Ahora: reintentos con backoff, ventana acotada [apertura,
+        # min(apertura+MAX+2h, apertura del siguiente trade)-1s] y auto-reparación
+        # (backfill_missing_pnl) al arrancar y cada ~10 min.
         # Fersuko (un SHORT quedó colgado contra el rebote y bloqueaba los LONGs).
         # En tendencia bajista el bot espera flat hasta que gire alcista.
         # v1.6.5: filtro SIMÉTRICO con VWAP 15min para ambos lados (LONG ya no usaba VWAP5).
@@ -1258,41 +1269,70 @@ class Executor:
             return False
 
     # ── v1.6.7: PnL REAL desde la income API de Binance ────────
-    async def _fetch_realized_pnl_since(self, since_ts_ms):
+    async def _fetch_realized_pnl_since(self, since_ts_ms, until_ts_ms=None, intentos=4):
         """Lee el PnL REALIZADO neto desde Binance (REALIZED_PNL + COMMISSION +
-        FUNDING_FEE) a partir de un timestamp en ms.
+        FUNDING_FEE) dentro de la ventana [since, until].
 
         Se usa cuando la posición la cerró el SL/TP NATIVO (algo order): el bot
         no tiene fill_price propio, pero Binance SÍ registró el resultado real.
+
+        v1.6.8:
+          - `until_ts_ms` acota la ventana. Sin `endTime` Binance devuelve TODAS las
+            entradas posteriores (p.ej. la comisión de apertura del SIGUIENTE trade)
+            → el PnL salía inflado.
+          - Reintentos con backoff exponencial: la income API es un servicio asíncrono
+            y puede devolver vacío durante varios segundos tras el fill. Eso fue lo que
+            dejó el trade #4115 con pnl_realizado=NULL (el bot leía ~20s tras el cierre).
         """
         if not self.exchange or not since_ts_ms:
             return None
-        try:
-            income = await self.exchange.fapiPrivateGetIncome({
-                "symbol": SYMBOL.replace("/", ""),
-                "startTime": int(since_ts_ms),
-                "limit": 1000,
-            })
-        except Exception as e:
-            log.warning(f"⚠️ income API no disponible: {str(e)[:90]}")
-            return None
-        if not isinstance(income, list) or not income:
-            return None
-        total, found = 0.0, False
-        for it in income:
-            itype = (it.get("incomeType") or "").upper()
-            if itype in ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE"):
-                total += float(it.get("income", 0) or 0)
-                found = True
-        return round(total, 4) if found else None
+        params = {
+            "symbol": BINANCE_SYMBOL,
+            "startTime": int(since_ts_ms),
+            "limit": 1000,
+        }
+        if until_ts_ms:
+            params["endTime"] = int(until_ts_ms)
+        for intento in range(1, intentos + 1):
+            try:
+                income = await self.exchange.fapiPrivateGetIncome(params)
+            except Exception as e:
+                log.warning(f"⚠️ income API intento {intento}/{intentos}: {str(e)[:90]}")
+                income = None
+            if isinstance(income, list) and income:
+                total, found = 0.0, False
+                for it in income:
+                    itype = (it.get("incomeType") or "").upper()
+                    if itype in ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE"):
+                        total += float(it.get("income", 0) or 0)
+                        found = True
+                if found:
+                    if intento > 1:
+                        log.info(f"✅ income API respondió en el intento {intento}/{intentos}")
+                    return round(total, 4)
+                log.warning(
+                    f"⚠️ income API intento {intento}/{intentos}: "
+                    f"{len(income)} entradas pero ninguna relevante"
+                )
+            else:
+                log.warning(f"⚠️ income API intento {intento}/{intentos}: respuesta vacía")
+            if intento < intentos:
+                await asyncio.sleep(2 ** intento)  # 2s, 4s, 8s
+        log.warning("❌ income API: sin datos tras agotar reintentos (backfill lo recuperará)")
+        return None
 
-    async def close_trade_with_real_pnl(self, trade_id: int, motivo: str = ""):
-        """v1.6.7: Marca un trade como CLOSED_FORCE recuperando el PnL REAL de
-        Binance (income API) desde su timestamp de apertura.
+    async def close_trade_with_real_pnl(self, trade_id: int, motivo: str = "", intentos: int = 4):
+        """Marca un trade como CLOSED_FORCE recuperando el PnL REAL de Binance
+        (income API) desde su timestamp de apertura.
 
         Antes: cuando el SL/TP nativo cerraba la posición, el bot recibía
         'ReduceOnly rejected' y marcaba CLOSED_FORCE con pnl_realizado=NULL
         (journal ciego). Ahora se recupera el resultado neto real.
+
+        v1.6.8: ventana acotada [apertura-10s, min(apertura+MAX+2h, apertura del
+        SIGUIENTE trade)-1s] para no contar comisiones de trades posteriores, y
+        UPDATE idempotente (solo escribe si pnl_realizado IS NULL) para poder
+        re-ejecutarse desde el backfill sin pisar datos válidos.
         """
         try:
             self.connect_db()
@@ -1302,12 +1342,30 @@ class Executor:
                     (trade_id,),
                 )
                 row = cur.fetchone()
-            if not row:
-                return False
-            since_ms = int(row[0]) if row[0] is not None else None
-            bal_antes = float(row[1]) if row[1] is not None else 0.0
+                if not row:
+                    return False
+                since_ms = int(row[0]) if row[0] is not None else None
+                bal_antes = float(row[1]) if row[1] is not None else 0.0
+                # v1.6.8: apertura del siguiente trade = cota superior natural de la ventana
+                cur.execute(
+                    "SELECT MIN(EXTRACT(EPOCH FROM timestamp)*1000) FROM hermes_trades WHERE id > %s",
+                    (trade_id,),
+                )
+                _nxt = cur.fetchone()
 
-            pnl = await self._fetch_realized_pnl_since(since_ms)
+            if not since_ms:
+                return False
+
+            # -10s: la comisión de apertura se registra en el mismo segundo (a veces
+            # unos ms ANTES del timestamp que guardamos en DB).
+            ventana_desde = since_ms - 10_000
+            # Cota: apertura + MAX_POSITION_HOURS + 2h de holgura (nunca debería superarlo)
+            ventana_hasta = since_ms + int((MAX_POSITION_HOURS + 2) * 3600 * 1000)
+            if _nxt and _nxt[0] is not None:
+                # -1s: excluir la comisión de apertura del siguiente trade
+                ventana_hasta = min(ventana_hasta, int(_nxt[0]) - 1_000)
+
+            pnl = await self._fetch_realized_pnl_since(ventana_desde, ventana_hasta, intentos=intentos)
 
             self.connect_db()
             with self.conn.cursor() as cur:
@@ -1315,12 +1373,13 @@ class Executor:
                     bal_desp = round(bal_antes + pnl, 2) if bal_antes > 0 else None
                     cur.execute(
                         "UPDATE hermes_trades SET estado = 'CLOSED_FORCE', "
-                        "pnl_realizado = %s, balance_despues = %s "
-                        "WHERE id = %s AND estado = 'EJECUTADO'",
+                        "pnl_realizado = %s, "
+                        "balance_despues = COALESCE(balance_despues, %s) "
+                        "WHERE id = %s AND pnl_realizado IS NULL",
                         (round(pnl, 2), bal_desp, trade_id),
                     )
                     if cur.rowcount == 0:
-                        log.info(f"ℹ️ Trade #{trade_id} ya estaba cerrado — no se re-procesa")
+                        log.info(f"ℹ️ Trade #{trade_id} ya tenía PnL registrado — no se re-procesa")
                     else:
                         log.info(
                             f"📝 Trade #{trade_id} cerrado con PnL REAL de Binance: {pnl:+.2f} USDT "
@@ -1339,6 +1398,48 @@ class Executor:
         except Exception as e:
             log.warning(f"⚠️ Error cerrando trade #{trade_id} con PnL real: {e}")
             return False
+
+    async def backfill_missing_pnl(self, max_trades: int = 8):
+        """v1.6.8 — Auto-reparación del journal.
+
+        Busca trades REAL ya cerrados (CLOSED_FORCE) con pnl_realizado NULL y les
+        recupera el PnL real desde Binance (income API). Cubre el caso en que la API
+        no tenía el dato en el instante del cierre (indexado asíncrono) — el bug que
+        dejó ciego el journal con #4115.
+
+        Idempotente: solo escribe donde pnl_realizado IS NULL. Se llama al arrancar
+        (primer ciclo) y cada ~10 min.
+
+        Lotes pequeños (8) + pocos reintentos (2) a propósito: el backfill NO debe
+        bloquear el ciclo de trading. Con ~167 pendientes históricos se limpia en
+        ~2 h corriendo en segundo plano, sin afectar la operativa.
+        """
+        try:
+            self.connect_db()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM hermes_trades "
+                    "WHERE modo = 'REAL' AND estado = 'CLOSED_FORCE' AND pnl_realizado IS NULL "
+                    "ORDER BY id DESC LIMIT %s",
+                    (max_trades,),
+                )
+                pendientes = [r[0] for r in cur.fetchall()]
+
+            if not pendientes:
+                return 0
+
+            log.info(f"🩹 Backfill PnL: {len(pendientes)} trades con PnL=NULL → consultando Binance")
+            reparados = 0
+            for tid in pendientes:
+                if await self.close_trade_with_real_pnl(
+                    tid, "backfill automático v1.6.8", intentos=2
+                ):
+                    reparados += 1
+            log.info(f"🩹 Backfill PnL: {reparados}/{len(pendientes)} procesados")
+            return reparados
+        except Exception as e:
+            log.warning(f"⚠️ Error en backfill de PnL: {e}")
+            return 0
 
     async def force_close_position(self, trade_id: int, side: str, amount: float, reason: str):
         """
@@ -1988,6 +2089,18 @@ class Executor:
                 await self.reconcile_positions()
             except Exception as e:
                 log.warning(f"⚠️ Error en reconcile_positions: {e}")
+
+            # 1c3. v1.6.8: auto-reparación del journal.
+            # Rellena el PnL real de trades CLOSED_FORCE que quedaron en NULL (la income
+            # API puede no tener el dato en el instante del cierre). Corre en el primer
+            # ciclo (arranque) y luego cada ~10 min.
+            try:
+                _ahora = time.time()
+                if _ahora - getattr(self, "_ultimo_backfill", 0.0) > 600:
+                    self._ultimo_backfill = _ahora
+                    await self.backfill_missing_pnl()
+            except Exception as e:
+                log.warning(f"⚠️ Error en backfill de PnL: {e}")
 
             # 1d. Check SL/TP local (porque Binance oculta algo orders)
             try:
