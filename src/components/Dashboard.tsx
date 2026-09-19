@@ -16,7 +16,6 @@ import {
   Wifi, 
   WifiOff, 
   RefreshCw, 
-  Layers, 
   ShieldAlert,
   Server
 } from 'lucide-react';
@@ -26,7 +25,7 @@ export const Dashboard: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isMocked, setIsMocked] = useState<boolean>(false);
   const [, setLastUpdate] = useState<Date | null>(null);
-  const [limit, setLimit] = useState<number>(100);
+  const [limit] = useState<number>(200);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [pocData, setPocData] = useState<PocData | null>(null);
   const [alerts, setAlerts] = useState<SystemAlert[]>([]);
@@ -263,7 +262,7 @@ export const Dashboard: React.FC = () => {
                   TraderSuko
                 </h1>
                 <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono tracking-widest">
-                  V1.6.13
+                  V1.7.1
                 </span>
               </div>
               <p className="text-[9px] text-slate-500 font-orbitron font-medium tracking-wide">
@@ -385,32 +384,15 @@ export const Dashboard: React.FC = () => {
           />
         </div>
 
-        {/* Panel de configuración de ventana — entre KPIs y gráfico */}
-        <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl glass-panel">
-          <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-brand-cyan" />
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono">
-              Configuración de Ventana de Visualización
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500 font-medium">Límite de registros:</span>
-            <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-900">
-              {[50, 100, 150].map((val) => (
-                <button
-                  key={val}
-                  onClick={() => setLimit(val)}
-                  className={`px-3 py-1 rounded text-xs font-mono font-bold transition-all duration-200 cursor-pointer ${
-                    limit === val
-                      ? 'bg-brand-cyan/10 text-brand-cyan border border-brand-cyan/20'
-                      : 'text-slate-500 hover:text-slate-300 border border-transparent'
-                  }`}
-                >
-                  {val}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* 4.4. Cascadas de Liquidaciones Forzadas — full width, debajo de los KPIs
+             (el panel de ventana se eliminó: el límite quedó fijo en 200 registros) */}
+        <div className="w-full rounded-xl border border-slate-800/60 bg-slate-950/40 backdrop-blur-sm">
+          <LiquidationsChart 
+            data={data} 
+            isLoading={isLoading} 
+            totalLongsLiq={metrics.totalLongsLiq}
+            totalShortsLiq={metrics.totalShortsLiq}
+          />
         </div>
 
         {/* 4.5. Gráfica de Trades sobre Precio */}
@@ -430,17 +412,9 @@ export const Dashboard: React.FC = () => {
           
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
-            {/* Columna Izquierda: Gráfico de Liquidaciones + Terminal de Logs */}
+            {/* Columna Izquierda: Terminal de Logs */}
             <div className="lg:col-span-2 flex flex-col gap-6">
               
-              {/* Gráfico de Liquidaciones */}
-              <LiquidationsChart 
-                data={data} 
-                isLoading={isLoading} 
-                totalLongsLiq={metrics.totalLongsLiq}
-                totalShortsLiq={metrics.totalShortsLiq}
-              />
-
               {/* Bitácora de Logs */}
               <AlertsLog 
                 alerts={alerts} 
@@ -450,16 +424,9 @@ export const Dashboard: React.FC = () => {
               />
             </div>
 
-            {/* Columna Derecha: Solo widgets interactivos (Executor, Position, Config) */}
+            {/* Columna Derecha: Calibrador primero, Ejecutor movido abajo */}
             <div className="lg:col-span-1 flex flex-col gap-6">
               
-              {/* TradingPanel fusionado (Executor + Position) */}
-              <TradingPanel
-                executor={executorStatus}
-                position={position}
-                isLoading={isLoading}
-              />
-
               {/* Calibrador de Sensibilidad */}
               <ConfigCard 
                 config={config}
@@ -467,6 +434,13 @@ export const Dashboard: React.FC = () => {
                 isSaving={isSavingConfig}
                 saveStatus={configSaveStatus}
                 isApiMocked={isConfigMocked}
+              />
+
+              {/* TradingPanel fusionado (Executor + Position) — movido debajo del calibrador */}
+              <TradingPanel
+                executor={executorStatus}
+                position={position}
+                isLoading={isLoading}
               />
             </div>
 
