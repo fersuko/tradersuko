@@ -1606,6 +1606,61 @@ class Executor:
             log.warning(f"⚠️ Error en backfill de PnL: {e}")
             return 0
 
+    async def close_trade_if_confirmed(self, trade_id: int, motivo: str = "") -> bool:
+        """v1.6.13 — Cierra un trade SOLO si Binance CONFIRMA que hubo PnL realizado.
+
+        Se usa para posiciones "fantasma": el trade está EJECUTADO en la DB pero ya
+        no existe posición en el exchange. Marcar eso ciegamente es peligroso (un
+        fallo transitorio de la API de posiciones haría cerrar un trade VIVO y el bot
+        abriría otro encima), así que la confirmación viene de la income API: si
+        Binance registró REALIZED_PNL, el cierre es un hecho.
+
+        Devuelve True si lo cerró.
+        """
+        try:
+            self.connect_db()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT EXTRACT(EPOCH FROM timestamp)*1000 FROM hermes_trades WHERE id = %s",
+                    (trade_id,),
+                )
+                row = cur.fetchone()
+                if not row or row[0] is None:
+                    return False
+                open_ms = int(row[0])
+                cur.execute(
+                    "SELECT MIN(EXTRACT(EPOCH FROM timestamp)*1000) FROM hermes_trades WHERE id > %s",
+                    (trade_id,),
+                )
+                nxt = cur.fetchone()[0]
+
+            desde = open_ms - 10_000
+            hasta = int(nxt) - 1_000 if nxt else int(time.time() * 1000)
+            pnl = await self._fetch_realized_pnl_since(desde, hasta, intentos=2)
+
+            if pnl is None:
+                log.warning(
+                    f"⚠️ #{trade_id}: sin posición en exchange pero Binance NO reporta PnL "
+                    f"— NO se marca cerrado (posible fallo transitorio de la API)"
+                )
+                return False
+
+            self.connect_db()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE hermes_trades SET estado = 'CLOSED_FORCE', pnl_realizado = %s "
+                    "WHERE id = %s AND pnl_realizado IS NULL",
+                    (round(pnl, 2), trade_id),
+                )
+                n = cur.rowcount
+            self.conn.commit()
+            if n:
+                log.info(f"📝 #{trade_id} cerrado (fantasma CONFIRMADO por Binance): PnL {pnl:+.2f} USDT | {motivo}")
+            return bool(n)
+        except Exception as e:
+            log.warning(f"⚠️ Error cerrando fantasma #{trade_id}: {e}")
+            return False
+
     async def force_close_position(self, trade_id: int, side: str, amount: float, reason: str):
         """
         Cierra una posición forzadamente con orden de mercado.
@@ -1735,38 +1790,16 @@ class Executor:
                 f"{amount:.5f} BTC @ ${fill_price:.2f} | Razón: {reason}",
             )
 
-            # Marcar el trade como cerrado en DB + calcular PnL REAL
-            _pnl_guardado = False
-            try:
-                self.connect_db()
-                with self.conn.cursor() as cur:
-                    # Obtener entry price y balance_antes para calcular PnL real
-                    cur.execute(
-                        "SELECT precio_entrada, balance_antes FROM hermes_trades WHERE id = %s",
-                        (trade_id,),
-                    )
-                    _trow = cur.fetchone()
-                    _entry = float(_trow[0]) if _trow and _trow[0] else 0.0
-                    _bal_antes = float(_trow[1]) if _trow and _trow[1] else 0.0
-
-                    # PnL realizado = (fill - entry) * qty para LONG, (entry - fill) * qty para SHORT
-                    if _entry > 0 and fill_price > 0:
-                        _pnl_real = (fill_price - _entry) * real_amount if side == "LONG" \
-                                    else (_entry - fill_price) * real_amount
-                        cur.execute(
-                            "UPDATE hermes_trades SET estado = 'CLOSED_FORCE', "
-                            "pnl_realizado = %s, balance_despues = %s WHERE id = %s",
-                            (round(_pnl_real, 2), round(_bal_antes + _pnl_real, 2) if _bal_antes > 0 else None, trade_id),
-                        )
-                        log.info(f"📝 Trade #{trade_id} cerrado: PnL real {_pnl_real:+.2f} USDT (entry={_entry:.2f} fill={fill_price:.2f})")
-                        _pnl_guardado = True
-                self.conn.commit()
-            except Exception as e:
-                log.warning(f"⚠️ Error actualizando estado en DB: {e}")
-
-            # v1.6.7: si no hubo fill_price/entry → recuperar el PnL real desde Binance
-            if not _pnl_guardado:
-                await self.close_trade_with_real_pnl(trade_id, reason)
+            # Marcar el trade como cerrado en DB — v1.6.12: SIEMPRE con el PnL real
+            # de la income API de Binance (REALIZED_PNL + COMMISSION + FUNDING_FEE).
+            #
+            # Antes se escribía una ESTIMACIÓN propia: (fill − entry) × qty. Esa
+            # estimación IGNORA comisiones y funding y a veces usa un fill_price
+            # equivocado: #4119 y #4120 quedaron ~$10 por encima de lo real (la suma
+            # de los PnL no cuadraba con el balance). Ahora la fuente de verdad es
+            # siempre Binance; si la API falla, el backfill lo repara en el siguiente
+            # ciclo.
+            await self.close_trade_with_real_pnl(trade_id, reason)
 
             return True
 
@@ -1912,16 +1945,23 @@ class Executor:
             if not db_trades:
                 return
 
-            # ── Verificación suave de fantasmas (solo informa, no cierra) ──
+            # ── v1.6.13: fantasmas — cierre CONFIRMADO por Binance ──
+            # Antes solo se informaba (se delegaba a check_sl_tp), y eso dejaba trades
+            # ATASCADOS como EJECUTADO y sin PnL cuando la posición desaparecía y el
+            # precio ya no cumplía la condición de SL/TP: #4120 estuvo 12+ h repitiendo
+            # este mensaje cada ciclo con el journal ciego.
+            # Ahora se cierran, pero SOLO si la income API confirma el REALIZED_PNL:
+            # así un fallo transitorio de la API de posiciones no puede marcar como
+            # cerrado un trade que sigue vivo (el motivo original de la cautela).
             for trade in db_trades:
                 trade_id = trade["id"]
                 side = trade["lado"]
                 side_match = (side == real_side)
                 if not side_match or real_qty < 0.0005:
-                    log.info(f"📡 #{trade_id} {side}: no detectado en exchange — "
-                             f"check_sl_tp() se encargará del cierre si corresponde")
-            # NOTA: Ya no marcamos CLOSED_FORCE aquí. Solo check_sl_tp()
-            # y enforce_timeout() cierran posiciones activas.
+                    log.info(f"📡 #{trade_id} {side}: no detectado en exchange — verificando cierre con Binance")
+                    await self.close_trade_if_confirmed(
+                        trade_id, "Fantasma — posición cerrada en exchange (confirmado)"
+                    )
 
         except Exception as e:
             log.warning(f"⚠️ Error en reconcile_positions: {e}")

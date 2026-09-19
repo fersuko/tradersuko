@@ -263,7 +263,7 @@ export const Dashboard: React.FC = () => {
                   TraderSuko
                 </h1>
                 <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono tracking-widest">
-                  V1.6.11
+                  V1.6.13
                 </span>
               </div>
               <p className="text-[9px] text-slate-500 font-orbitron font-medium tracking-wide">
