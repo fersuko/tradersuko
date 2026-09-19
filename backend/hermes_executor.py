@@ -1581,6 +1581,10 @@ class Executor:
                 cur.execute(
                     "SELECT id FROM hermes_trades "
                     "WHERE modo = 'REAL' AND estado = 'CLOSED_FORCE' AND pnl_realizado IS NULL "
+                    # v1.6.11: solo los últimos 45 días. La income API de Binance no
+                    # tiene datos de trades viejos (#3897, 17-jul, es irrecuperable) y
+                    # reintentarlo cada 10 min solo generaba ruido en el log.
+                    "AND timestamp > now() - interval '45 days' "
                     "ORDER BY id DESC LIMIT %s",
                     (max_trades,),
                 )
