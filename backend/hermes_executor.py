@@ -44,6 +44,8 @@ if _env_path:
 else:
     load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # v1.6.11: usado por RISK_STATE_FILE
+
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "127.0.0.1"),
     "port": int(os.getenv("DB_PORT", "5432")),
@@ -79,6 +81,17 @@ MAX_TRADES_PER_DAY = 5
 SLIPPAGE_SL_PCT = Decimal("0.010")  # 1.0% del precio — más espacio para respirar (antes 0.5%)
 SLIPPAGE_TP_RATIO = Decimal("6.0")  # Take Profit = SL distancia × ratio (6.0 → 6.0%) — reward:risk 6:1
 MAX_POSITION_HOURS = 16  # horas máximas antes de cierre forzado (v1.6.2: 8h -> 16h para dar aire al TP 6%; funding se monitorea aparte)
+
+# ── v1.6.11: FRENOS DE EMERGENCIA (circuit breakers de riesgo) ──
+# Aprobados por Fersuko el 18-sep-2026 antes de escalar capital.
+# Sin esto, el bot no tenía NINGÚN tope de pérdida: podía encadenar rachas
+# completas sin parar. Con ~2-3 trades/día y 1.5% de riesgo por trade, un
+# mercado adverso podía comerse la cuenta en días.
+MAX_PERDIDA_DIARIA_PCT = 5.0    # % de pérdida en el día → no más trades hasta mañana
+MAX_PERDIDAS_SEGUIDAS = 4       # pérdidas consecutivas → pausa
+PAUSA_PERDIDAS_SEGUIDAS_H = 12  # horas de pausa al alcanzar la racha
+MAX_DRAWDOWN_PCT = 15.0         # % de caída desde el pico de equity → stop total
+RISK_STATE_FILE = os.path.join(BASE_DIR, "data", "risk_state.json")
 
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -760,6 +773,147 @@ class Executor:
         except Exception as e:
             log.warning(f"⚠️ Error en circuit breaker: {e}")
             return False
+
+    # ── v1.6.11: FRENOS DE EMERGENCIA DE RIESGO ───────────────
+    def _cargar_estado_riesgo(self) -> dict:
+        """Estado persistente de riesgo (sobrevive reinicios del bot)."""
+        try:
+            with open(RISK_STATE_FILE, encoding="utf-8") as fh:
+                return json.load(fh) or {}
+        except Exception:
+            return {}
+
+    def _guardar_estado_riesgo(self, st: dict):
+        try:
+            os.makedirs(os.path.dirname(RISK_STATE_FILE), exist_ok=True)
+            with open(RISK_STATE_FILE, "w", encoding="utf-8") as fh:
+                json.dump(st, fh)
+        except Exception as e:
+            log.warning(f"⚠️ No se pudo guardar estado de riesgo: {e}")
+
+    async def riesgo_breaker(self) -> bool:
+        """v1.6.11 — Frenos de emergencia. True = se puede operar.
+
+        1) Pérdida diaria    ≥ MAX_PERDIDA_DIARIA_PCT   → no operar hasta mañana
+        2) Pérdidas seguidas ≥ MAX_PERDIDAS_SEGUIDAS    → pausa de PAUSA_PERDIDAS_SEGUIDAS_H
+        3) Drawdown desde el pico ≥ MAX_DRAWDOWN_PCT    → STOP TOTAL (revisión manual)
+
+        Ante un fallo de lectura (balance/DB) devuelve True: no bloqueamos la
+        operativa por un problema de infraestructura.
+        """
+        try:
+            hoy = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # Balance TOTAL (el "free" baja mientras hay posición abierta)
+            balance = 0.0
+            if self.exchange:
+                try:
+                    b = await self.exchange.fetch_balance()
+                    usdt = b.get("USDT", {}) or {}
+                    balance = float(usdt.get("total") or usdt.get("free") or 0)
+                except Exception as e:
+                    log.warning(f"⚠️ Riesgo: balance ilegible ({str(e)[:80]}) — checks omitidos este ciclo")
+                    return True
+            if balance <= 0:
+                return True
+
+            st = self._cargar_estado_riesgo()
+
+            # Reset diario
+            if st.get("fecha") != hoy:
+                st["fecha"] = hoy
+                st["balance_inicio_dia"] = balance
+                log.info(f"📅 Nuevo día de riesgo — balance de apertura ${balance:.2f}")
+
+            # Pico de equity (solo sube)
+            pico_prev = float(st.get("pico_balance", 0) or 0)
+            pico = max(pico_prev, balance)
+            if pico > pico_prev:
+                log.info(f"📈 Nuevo pico de equity: ${pico:.2f}")
+
+            # ── FRENO 3 (se evalúa antes): STOP TOTAL persistente ──
+            if st.get("stop_total"):
+                log.warning("🛑 STOP TOTAL sigue activo (drawdown) — operativa bloqueada")
+                self._guardar_estado_riesgo(st)
+                return False
+
+            # ── FRENO 1: pérdida diaria ──
+            bi = float(st.get("balance_inicio_dia", balance) or balance)
+            pct_dia = (balance / bi - 1) * 100 if bi > 0 else 0.0
+            if pct_dia <= -MAX_PERDIDA_DIARIA_PCT:
+                log.warning(
+                    f"🚨 FRENO DIARIO ACTIVO: {pct_dia:+.2f}% hoy "
+                    f"(tope -{MAX_PERDIDA_DIARIA_PCT}%) — sin más trades hasta mañana"
+                )
+                self._guardar_estado_riesgo(st)
+                return False
+
+            # ── FRENO 2: drawdown desde el pico de equity ──
+            dd = (balance / pico - 1) * 100 if pico > 0 else 0.0
+            if dd <= -MAX_DRAWDOWN_PCT:
+                log.warning(
+                    f"🛑 STOP TOTAL: drawdown {dd:+.2f}% desde el pico ${pico:.2f} "
+                    f"(tope -{MAX_DRAWDOWN_PCT}%) — balance ${balance:.2f}"
+                )
+                st["stop_total"] = True
+                st["stop_total_ts"] = datetime.now(timezone.utc).isoformat()
+                try:
+                    self.insert_alerta(
+                        "RIESGO_STOP_TOTAL",
+                        f"🛑 STOP TOTAL: drawdown {dd:+.2f}% desde el pico ${pico:.2f} "
+                        f"(balance ${balance:.2f}). Revisión manual requerida para reanudar.",
+                    )
+                except Exception:
+                    pass
+                self._guardar_estado_riesgo(st)
+                return False
+
+            # ── FRENO 3: pérdidas seguidas ──
+            self.connect_db()
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pnl_realizado FROM hermes_trades "
+                    "WHERE modo='REAL' AND pnl_realizado IS NOT NULL "
+                    "ORDER BY id DESC LIMIT 12"
+                )
+                racha = 0
+                for (p,) in cur.fetchall():
+                    if p is not None and float(p) < 0:
+                        racha += 1
+                    else:
+                        break
+            if racha < MAX_PERDIDAS_SEGUIDAS:
+                st.pop("pausa_hasta_ts", None)
+            else:
+                ahora = time.time()
+                hasta = float(st.get("pausa_hasta_ts", 0) or 0)
+                if hasta == 0:
+                    hasta = ahora + PAUSA_PERDIDAS_SEGUIDAS_H * 3600
+                    st["pausa_hasta_ts"] = hasta
+                    log.warning(
+                        f"⏸️ FRENO RACHA: {racha} pérdidas seguidas — "
+                        f"pausa de {PAUSA_PERDIDAS_SEGUIDAS_H}h"
+                    )
+                    try:
+                        self.insert_alerta(
+                            "RIESGO_RACHA",
+                            f"⏸️ Pausa activada: {racha} pérdidas seguidas — "
+                            f"el bot no operará durante {PAUSA_PERDIDAS_SEGUIDAS_H}h",
+                        )
+                    except Exception:
+                        pass
+                if ahora < hasta:
+                    log.info(f"⏸️ Pausa por racha de pérdidas — faltan {(hasta - ahora) / 3600:.1f}h")
+                    self._guardar_estado_riesgo(st)
+                    return False
+                log.info("✅ Pausa por racha cumplida — reanudando")
+
+            self._guardar_estado_riesgo(st)
+            log.info(f"🔓 Riesgo OK: hoy {pct_dia:+.2f}% | DD {dd:+.2f}% desde pico ${pico:.2f}")
+            return True
+        except Exception as e:
+            log.warning(f"⚠️ Error en riesgo_breaker: {e}")
+            return True
 
     # ── Cálculo de tamaño de posición ─────────────────────────
     async def calculate_position_size(self, precio: float) -> dict:
@@ -2179,8 +2333,13 @@ class Executor:
                     log.info(f"⏳ Cooldown post-SL: {restante}s restantes (espera de {self.sl_cooldown}s tras stop-loss)")
                     return
 
-                # Circuit breaker
+                # Circuit breaker (límite de trades en 24h)
                 if not self.circuit_breaker():
+                    return
+
+                # v1.6.11: frenos de emergencia de riesgo
+                # (pérdida diaria / racha de pérdidas / drawdown desde el pico)
+                if not await self.riesgo_breaker():
                     return
 
                 # Verificar posición abierta en exchange
