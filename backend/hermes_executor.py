@@ -825,11 +825,16 @@ class Executor:
                 st["balance_inicio_dia"] = balance
                 log.info(f"📅 Nuevo día de riesgo — balance de apertura ${balance:.2f}")
 
-            # Pico de equity (solo sube)
+            # Pico de equity (solo sube) — DEBE PERSISTIRSE.
+            # BUG corregido (v1.6.14): `pico` se calculaba como variable LOCAL y
+            # nunca se escribía en `st` -> el archivo conservaba un pico congelado
+            # y el STOP por drawdown se medía desde ahí. Si el equity hacía un
+            # nuevo máximo y luego caía, el -15% podía NO dispararse nunca.
             pico_prev = float(st.get("pico_balance", 0) or 0)
             pico = max(pico_prev, balance)
             if pico > pico_prev:
                 log.info(f"📈 Nuevo pico de equity: ${pico:.2f}")
+                st["pico_balance"] = pico
 
             # ── FRENO 3 (se evalúa antes): STOP TOTAL persistente ──
             if st.get("stop_total"):
