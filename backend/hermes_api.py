@@ -252,7 +252,7 @@ async def update_config(config: ConfigUpdate):
             f"{k} = %s" for k in updates.keys()
         )
         # Agregar updated_at
-        set_clause += ", updated_at = NOW()"
+        set_clause += ", updated_at = clock_timestamp()"
         values = list(updates.values()) + [1]
 
         conn = psycopg2.connect(**DB_CONFIG)
@@ -345,7 +345,7 @@ async def get_poc():
                 """
                 SELECT price_bucket, total_volume
                 FROM volume_profile
-                WHERE updated_at > NOW() - INTERVAL '2 hours'
+                WHERE updated_at > clock_timestamp() - INTERVAL '2 hours'
                 ORDER BY total_volume DESC
                 LIMIT 1
                 """
@@ -401,7 +401,7 @@ async def get_radar():
                     """SELECT COALESCE(SUM(liquidaciones_longs), 0) as total_longs,
                               COALESCE(SUM(liquidaciones_shorts), 0) as total_shorts
                        FROM metricas_btc
-                       WHERE timestamp > NOW() - INTERVAL '1 minute'"""
+                       WHERE timestamp > clock_timestamp() - INTERVAL '1 minute'"""
                 )
                 liq_row = cur.fetchone()
                 liq_longs = float(liq_row["total_longs"] or 0)
@@ -502,7 +502,7 @@ async def get_executor_status():
             cur.execute(
                 """
                 SELECT COUNT(*) FROM hermes_trades
-                WHERE timestamp > NOW() - INTERVAL '24 hours'
+                WHERE timestamp > clock_timestamp() - INTERVAL '24 hours'
                 AND estado NOT IN ('CANCELADO', 'CLOSED', 'CLOSED_FORCE', 'FALLIDO', 'SIMULADO')
                 AND modo = 'REAL'
                 """
@@ -554,7 +554,7 @@ async def get_executor_status():
                 """
                 SELECT id, lado, precio_entrada, cantidad_btc,
                        stop_loss, take_profit, timestamp,
-                       EXTRACT(EPOCH FROM (NOW() - timestamp))/3600 as edad_horas
+                       EXTRACT(EPOCH FROM (clock_timestamp() - timestamp))/3600 as edad_horas
                 FROM hermes_trades
                 WHERE estado = 'EJECUTADO'
                 ORDER BY timestamp DESC
@@ -574,7 +574,7 @@ async def get_executor_status():
                 """
                 SELECT COALESCE(SUM(pnl_realizado), 0) as pnl_dia
                 FROM hermes_trades
-                WHERE timestamp > NOW() - INTERVAL '24 hours'
+                WHERE timestamp > clock_timestamp() - INTERVAL '24 hours'
                 AND estado IN ('TP_HIT', 'SL_HIT', 'CLOSED_FORCE')
                 AND modo != 'SIMULACION'
                 """

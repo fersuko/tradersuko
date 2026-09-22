@@ -154,7 +154,7 @@ def circuit_breaker(
                 """SELECT COUNT(*) FROM hermes_trades
                    WHERE estado IN ('EJECUTADO', 'CLOSED_FORCE', 'CLOSED_SL', 'CLOSED_TP')
                    AND modo = %s
-                   AND timestamp > NOW() - INTERVAL '24 hours'""",
+                   AND timestamp > clock_timestamp() - INTERVAL '24 hours'""",
                 (modo,),
             )
             usados = cur.fetchone()[0]

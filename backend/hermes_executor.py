@@ -354,7 +354,18 @@ class Executor:
 
     # ── Evaluación de señal ───────────────────────────────────
     def get_liquidations_last_minute(self):
-        """Suma liquidaciones de los últimos 60 segundos."""
+        """Suma liquidaciones de los últimos 60 segundos.
+
+        v1.6.15 — BUG CORREGIDO: aqui se usaba NOW(), pero la conexion es
+        autocommit=False (ver connect_db), asi que la transaccion del executor vive
+        abierta entre commits y NOW() (= hora de INICIO de la transaccion en
+        Postgres) quedaba CONGELADO. La ventana de "1 minuto" sumaba en realidad
+        TODO desde el ultimo commit y crecia sin techo (se midieron
+        $16,235,355,886 "en 1 minuto"). Efecto real: liq_ok siempre True, o sea la
+        3a condicion de la senal (necesita 3/3) NUNCA filtraba nada y el bot
+        operaba con 2 condiciones reales. Ahora clock_timestamp() = hora real.
+        OJO: no volver a poner NOW() en queries de ventana de este archivo.
+        """
         try:
             self.connect_db()
             with self.conn.cursor(
@@ -366,7 +377,7 @@ class Executor:
                         COALESCE(SUM(liquidaciones_longs), 0) as total_longs,
                         COALESCE(SUM(liquidaciones_shorts), 0) as total_shorts
                     FROM metricas_btc
-                    WHERE timestamp > NOW() - INTERVAL '1 minute'
+                    WHERE timestamp > clock_timestamp() - INTERVAL '1 minute'
                     """
                 )
                 row = cur.fetchone()
@@ -731,7 +742,7 @@ class Executor:
                     SELECT COUNT(*) FROM hermes_trades
                     WHERE lado = %s
                     AND estado NOT IN ('FALLIDO', 'CANCELADO')
-                    AND timestamp > NOW() - INTERVAL '%s seconds'
+                    AND timestamp > clock_timestamp() - INTERVAL '%s seconds'
                 """, (side.upper(), seconds))
                 count = cur.fetchone()[0]
                 if count > 0:
@@ -754,7 +765,7 @@ class Executor:
                 cur.execute(
                     """
                     SELECT COUNT(*) FROM hermes_trades
-                    WHERE timestamp > NOW() - INTERVAL '24 hours'
+                    WHERE timestamp > clock_timestamp() - INTERVAL '24 hours'
                     AND estado NOT IN ('SIMULADO', 'CLOSED', 'CLOSED_FORCE', 'FALLIDO', 'CANCELADO')
                     AND modo = 'REAL'
                     """
@@ -1589,7 +1600,7 @@ class Executor:
                     # v1.6.11: solo los últimos 45 días. La income API de Binance no
                     # tiene datos de trades viejos (#3897, 17-jul, es irrecuperable) y
                     # reintentarlo cada 10 min solo generaba ruido en el log.
-                    "AND timestamp > now() - interval '45 days' "
+                    "AND timestamp > clock_timestamp() - interval '45 days' "
                     "ORDER BY id DESC LIMIT %s",
                     (max_trades,),
                 )
@@ -2105,7 +2116,7 @@ class Executor:
             with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
                     SELECT id, lado, cantidad_btc,
-                           EXTRACT(EPOCH FROM (NOW() - timestamp))/3600 as edad_horas
+                           EXTRACT(EPOCH FROM (clock_timestamp() - timestamp))/3600 as edad_horas
                     FROM hermes_trades
                     WHERE estado = 'EJECUTADO' AND modo IN ('REAL', 'DEMO')
                 """)
@@ -2162,7 +2173,7 @@ class Executor:
                     """
                     SELECT id, timestamp, tipo, mensaje FROM hermes_alertas
                     WHERE tipo IN ('MGMT_BREAK_EVEN', 'MGMT_TRAILING_SL', 'MGMT_TIME_OUT')
-                    AND timestamp > NOW() - INTERVAL '1 hour'
+                    AND timestamp > clock_timestamp() - INTERVAL '1 hour'
                     ORDER BY timestamp DESC LIMIT 5
                     """
                 )
