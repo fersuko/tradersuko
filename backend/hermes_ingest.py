@@ -52,6 +52,26 @@ STREAMS = (
 INSERT_INTERVAL = 5
 RECONNECT_DELAY = 5
 
+# ── CVD multi-venue (OKX + Coinbase) ───────────────────────────
+# La columna `cvd_okx` era una COPIA LITERAL de `cvd_binance` (se asignaba así en
+# `get_snapshot`), por lo que cualquier "divergencia entre venues" era
+# estructuralmente imposible: la diferencia era exactamente 0 en las 1.588.305 filas.
+# Aquí se calcula de verdad desde los trades de cada venue.
+#
+# CVD = Σ(USD del taker comprador) − Σ(USD del taker vendedor), ventana de 5 min
+# (mismo reset que el CVD de Binance).
+OKX_WS = "wss://ws.okx.com:8443/ws/v5/public"
+OKX_INST = os.getenv("OKX_INST", "BTC-USDT-SWAP")
+# BTC-USDT-SWAP: 1 contrato = 0.01 BTC. El campo `sz` de OKX viene en CONTRATOS,
+# NO en BTC — sin este factor el CVD sale 100× inflado. Verificado vía
+# /api/v5/public/instruments (ctVal=0.01, ctValCcy=BTC, lotSz=0.01).
+OKX_CTVAL = Decimal("0.01")
+COINBASE_WS = "wss://ws-feed.exchange.coinbase.com"
+COINBASE_PRODUCT = os.getenv("COINBASE_PRODUCT", "BTC-USD")
+CVD_VENUE_RESET = 300      # 5 min, igual que el CVD de Binance
+OKX_PING_INTERVAL = 20     # OKX cierra la conexión si pasa >30 s sin tráfico
+COINBASE_PING_INTERVAL = 20
+
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -75,6 +95,7 @@ class DataAggregator:
     def reset(self):
         self.cvd_binance = Decimal("0")
         self.cvd_okx = Decimal("0")
+        self.cvd_coinbase = Decimal("0")
         self.last_price = Decimal("0")
         self.open_interest = None
         self.funding_rate = None
@@ -337,7 +358,8 @@ class DataAggregator:
             "orderbook_depth_buyer": self.depth_buyer,
             "orderbook_depth_seller": self.depth_seller,
             "cvd_binance": self.cvd_binance,
-            "cvd_okx": self.cvd_binance,
+            "cvd_okx": self.cvd_okx,
+            "cvd_coinbase": self.cvd_coinbase,
             "presion_compra": self.presion_compra,
             "liquidaciones_longs": self.liquidaciones_longs,
             "liquidaciones_shorts": self.liquidaciones_shorts,
@@ -370,7 +392,7 @@ class DBInserter:
                     INSERT INTO metricas_btc (
                         timestamp, precio, open_interest, funding_rate,
                         orderbook_depth_buyer, orderbook_depth_seller,
-                        cvd_binance, cvd_okx, presion_compra,
+                        cvd_binance, cvd_okx, cvd_coinbase, presion_compra,
                         liquidaciones_longs, liquidaciones_shorts,
                         alerta_activa, trades_per_second,
                         precio_alto_fvg, precio_bajo_fvg,
@@ -379,7 +401,7 @@ class DBInserter:
                         %(timestamp)s, %(precio)s, %(open_interest)s,
                         %(funding_rate)s, %(orderbook_depth_buyer)s,
                         %(orderbook_depth_seller)s, %(cvd_binance)s,
-                        %(cvd_okx)s, %(presion_compra)s,
+                        %(cvd_okx)s, %(cvd_coinbase)s, %(presion_compra)s,
                         %(liquidaciones_longs)s, %(liquidaciones_shorts)s,
                         %(alerta_activa)s, %(trades_per_second)s,
                         %(precio_alto_fvg)s, %(precio_bajo_fvg)s,
@@ -517,6 +539,124 @@ async def oi_funding_poller(aggregator: DataAggregator, stop_event: asyncio.Even
     log.info("🛑 OI/funding poller detenido")
 
 
+# ── Tareas: CVD por venue (OKX perp + Coinbase spot) ───────────
+#
+# ¿Por qué WebSocket y no REST? El CVD necesita el lado AGRESOR (taker) de cada
+# trade. Un endpoint REST agregado también lo da, pero a menor resolución y con
+# más latencia; el WS va trade a trade y ya existe infraestructura de reconexión.
+#
+# Verificado el 24-sep-2026 desde este VPS: los WS de OKX, Bybit y Coinbase
+# entregan trades reales con lado taker. El fallo del `@markPrice` de Binance era
+# un caso aislado, no un problema general de WebSockets en este host.
+#
+# ⚠️ TRAMPA DE COINBASE: su documentación dice textualmente que en el canal
+# `matches` "the side field indicates the MAKER order side". Usarlo tal cual deja
+# el CVD INVERTIDO — signo plausible y dirección contraria, el peor tipo de bug.
+# El lado del taker es el OPUESTO (la doc lo confirma: side="sell" es un up-tick,
+# es decir compra agresiva).
+async def okx_cvd_worker(aggregator: DataAggregator, stop_event: asyncio.Event):
+    """CVD (ventana 5 min) desde los trades de OKX BTC-USDT-SWAP.
+
+    `sz` viene en CONTRATOS → notional USD = sz × ctVal × px.
+    OKX cierra la conexión si pasa >30 s sin tráfico: hay que mandar `ping` de
+    aplicación (texto) y él responde `pong`. Un ping a nivel WS no basta.
+    """
+    sub = {"op": "subscribe", "args": [{"channel": "trades", "instId": OKX_INST}]}
+    ok_once = False
+    while not stop_event.is_set():
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(OKX_WS, timeout=20, heartbeat=25) as ws:
+                    await ws.send_str(json.dumps(sub))
+                    log.info(f"✅ CVD OKX conectado ({OKX_INST}, ctVal={OKX_CTVAL})")
+                    last_ping = time_module.monotonic()
+                    while not stop_event.is_set():
+                        try:
+                            msg = await asyncio.wait_for(ws.receive(), timeout=15)
+                        except asyncio.TimeoutError:
+                            msg = None
+                        if msg is not None:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                if msg.data == "pong":
+                                    pass
+                                else:
+                                    d = json.loads(msg.data)
+                                    if d.get("arg", {}).get("channel") == "trades":
+                                        delta = Decimal("0")
+                                        for t in d.get("data", []):
+                                            usd = (Decimal(str(t["sz"])) * OKX_CTVAL
+                                                   * Decimal(str(t["px"])))
+                                            delta += usd if t["side"] == "buy" else -usd
+                                        if delta:
+                                            async with aggregator.lock:
+                                                aggregator.cvd_okx += delta
+                                            if not ok_once:
+                                                log.info("✅ CVD OKX fluyendo")
+                                                ok_once = True
+                            elif msg.type in (aiohttp.WSMsgType.CLOSE,
+                                              aiohttp.WSMsgType.ERROR):
+                                log.warning("⚠️ CVD OKX: conexión cerrada, reconectando")
+                                break
+                        if time_module.monotonic() - last_ping >= OKX_PING_INTERVAL:
+                            await ws.send_str("ping")
+                            last_ping = time_module.monotonic()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning(f"⚠️ CVD OKX reconectando: {type(e).__name__}: {e}")
+        await asyncio.sleep(RECONNECT_DELAY)
+    log.info("🛑 CVD OKX detenido")
+
+
+async def coinbase_cvd_worker(aggregator: DataAggregator, stop_event: asyncio.Event):
+    """CVD (ventana 5 min) desde los trades SPOT de Coinbase (BTC-USD).
+
+    Es spot, no perp: sirve como señal distinta — divergencia spot-vs-perp.
+    `side` es el lado del MAKER (ver nota arriba) → se invierte para obtener el taker.
+    Coinbase también cierra la conexión sin tráfico; se manda ping JSON.
+    """
+    sub = {"type": "subscribe", "product_ids": [COINBASE_PRODUCT],
+           "channels": ["matches"]}
+    ok_once = False
+    while not stop_event.is_set():
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(COINBASE_WS, timeout=20, heartbeat=20) as ws:
+                    await ws.send_str(json.dumps(sub))
+                    log.info(f"✅ CVD Coinbase conectado ({COINBASE_PRODUCT})")
+                    last_ping = time_module.monotonic()
+                    while not stop_event.is_set():
+                        try:
+                            msg = await asyncio.wait_for(ws.receive(), timeout=15)
+                        except asyncio.TimeoutError:
+                            msg = None
+                        if msg is not None:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                d = json.loads(msg.data)
+                                if d.get("type") == "match":
+                                    usd = Decimal(str(d["size"])) * Decimal(str(d["price"]))
+                                    # side = MAKER → taker es el opuesto
+                                    delta = usd if d.get("side") == "sell" else -usd
+                                    async with aggregator.lock:
+                                        aggregator.cvd_coinbase += delta
+                                    if not ok_once:
+                                        log.info("✅ CVD Coinbase fluyendo")
+                                        ok_once = True
+                            elif msg.type in (aiohttp.WSMsgType.CLOSE,
+                                              aiohttp.WSMsgType.ERROR):
+                                log.warning("⚠️ CVD Coinbase: conexión cerrada, reconectando")
+                                break
+                        if time_module.monotonic() - last_ping >= COINBASE_PING_INTERVAL:
+                            await ws.send_str(json.dumps({"type": "ping"}))
+                            last_ping = time_module.monotonic()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning(f"⚠️ CVD Coinbase reconectando: {type(e).__name__}: {e}")
+        await asyncio.sleep(RECONNECT_DELAY)
+    log.info("🛑 CVD Coinbase detenido")
+
+
 # ── Main ───────────────────────────────────────────────────────
 async def main():
     log.info("🚀 Hermes Ingest — TPS + FVG + Volume Profile")
@@ -538,6 +678,11 @@ async def main():
     # OI + funding por REST: el stream @markPrice no entrega nada desde este VPS
     oi_task = asyncio.create_task(oi_funding_poller(aggregator, stop_event))
     log.info("✅ OI/funding poller REST lanzado")
+
+    # CVD por venue: OKX (perp #2 por volumen) + Coinbase (spot)
+    okx_task = asyncio.create_task(okx_cvd_worker(aggregator, stop_event))
+    cb_task = asyncio.create_task(coinbase_cvd_worker(aggregator, stop_event))
+    log.info("✅ Workers CVD multi-venue lanzados (OKX + Coinbase)")
 
     ws_url = BINANCE_WS + STREAMS
     last_insert = datetime.now(timezone.utc)
@@ -593,6 +738,7 @@ async def main():
                             if (now - last_cvd_reset).total_seconds() >= 300:  # 5 minutos
                                 aggregator.cvd_binance = Decimal("0")
                                 aggregator.cvd_okx = Decimal("0")
+                                aggregator.cvd_coinbase = Decimal("0")
                                 last_cvd_reset = now
                                 log.info("🔄 CVD reseteado — ventana de 5 minutos")
 
