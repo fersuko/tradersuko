@@ -32,6 +32,10 @@ DB_CONFIG = {
 }
 
 SYMBOL = os.getenv("SYMBOL", "BTC/USDT:USDT")
+# Símbolo para las APIs REST de Binance (formato plano, sin ccxt).
+# OJO: hay que cortar el sufijo ":USDT" PRIMERO. `SYMBOL.replace("/", "")` a secas da
+# "BTCUSDT:USDT" → Binance responde -1121 Invalid symbol (bug real de sep-2026).
+BINANCE_SYMBOL = SYMBOL.split(":")[0].replace("/", "")
 DEPTH_LIMIT = 50
 DEPTH_PCT = Decimal("0.01")
 DEPTH_INTERVAL = 5
@@ -245,14 +249,24 @@ class DataAggregator:
             self.presion_compra = Decimal("50")
 
     async def process_mark_price(self, data):
+        """Stream `btcusdt@markPrice@1s`.
+
+        ⚠️ CORRECCIÓN 24-sep-2026 — dos cosas importantes:
+        1. `data["i"]` es el **index price**, NO el open interest. Antes se asignaba a
+           `self.open_interest`, lo que habría metido ~$83.900 en una columna llamada
+           "open_interest" (un valor FINGIDO: plausible pero de otra magnitud y otro
+           significado). El OI real viene por REST en `oi_funding_poller`.
+        2. Desde este VPS **este stream no entrega NADA**: verificado con dump crudo, 0
+           frames en `/ws/btcusdt@markPrice@1s`, `/ws/btcusdt@markPrice` y
+           `!markPrice@arr`, mientras `btcusdt@trade` entrega cientos. Consecuencia: la
+           heurística de liquidaciones por velocidad de abajo **también estaba muerta**.
+           Se deja el código porque es correcto si el stream llega a funcionar.
+        """
         async with self.lock:
             fr = data.get("r")
             if fr:
                 self.funding_rate = Decimal(str(fr))
-            oi = data.get("i")
-            if oi:
-                self.open_interest = Decimal(str(oi))
-            
+
             # Heurística de liquidaciones por velocidad de precio
             mark_price = Decimal(str(data.get("p", "0")))
             if self._prev_mark_price > 0 and mark_price > 0:
@@ -443,6 +457,66 @@ async def depth_poller(aggregator: DataAggregator, stop_event: asyncio.Event):
     log.info("🛑 Depth poller detenido")
 
 
+# ── Tarea: Open Interest + Funding por REST ────────────────────
+#
+# ¿Por qué REST y no el stream `@markPrice`?
+#   Verificado el 24-sep-2026 con dump crudo: desde este VPS el stream de mark price
+#   devuelve **0 frames** (ni siquiera un error) en `/ws/btcusdt@markPrice@1s`,
+#   `/ws/btcusdt@markPrice` y `!markPrice@arr`, mientras `btcusdt@trade` entrega
+#   cientos de mensajes en el mismo periodo. El endpoint REST sí responde.
+#   Además `data["i"]` del stream era el *index price*, no el OI (ver
+#   `process_mark_price`). Estas columnas llevaban **toda la historia de la tabla en
+#   NULL/0**: `open_interest` y `funding_rate` nunca tuvieron un valor real, lo que
+#   dejaba muerta la alerta `FUNDING_EXTREME` del brain y el log "Funding=0.0000%".
+OI_FUNDING_INTERVAL = 20  # segundos — el funding cambia cada 8 h; 20 s sobra de sobra
+
+_FAPI = "https://fapi.binance.com/fapi/v1"
+
+
+async def oi_funding_poller(aggregator: DataAggregator, stop_event: asyncio.Event):
+    """Rellena `open_interest` (en BTC) y `funding_rate` (fracción, p.ej. 0.0001 = 0.01%).
+
+    Formato del funding: **fracción**, que es lo que Binance devuelve y lo que esperan los
+    consumidores (`executor` imprime `funding*100:.4f}%`; `brain` compara con
+    `FUNDING_EXTREME = 0.001` = 0.1%).
+    """
+    sym = BINANCE_SYMBOL
+    ok_once = False
+    async with aiohttp.ClientSession() as session:
+        while not stop_event.is_set():
+            oi = fr = None
+            try:
+                async with session.get(f"{_FAPI}/openInterest",
+                                       params={"symbol": sym}, timeout=10) as r:
+                    if r.status == 200:
+                        oi = (await r.json()).get("openInterest")
+                async with session.get(f"{_FAPI}/premiumIndex",
+                                       params={"symbol": sym}, timeout=10) as r:
+                    if r.status == 200:
+                        d = await r.json()
+                        fr = d.get("lastFundingRate")
+            except Exception as e:
+                log.warning(f"⚠️ oi_funding_poller: {type(e).__name__}: {e}")
+
+            if oi is not None or fr is not None:
+                async with aggregator.lock:
+                    if oi is not None:
+                        aggregator.open_interest = Decimal(str(oi))
+                    if fr is not None:
+                        aggregator.funding_rate = Decimal(str(fr))
+                if not ok_once:
+                    log.info("✅ OI + funding REST activos (el stream @markPrice no llega)")
+                    ok_once = True
+                log.info(
+                    f"📈 OI {float(oi):,.0f} BTC | "
+                    f"funding {float(fr) * 100:+.4f}%"
+                    if (oi is not None and fr is not None) else "📈 OI/funding parcial"
+                )
+
+            await asyncio.sleep(OI_FUNDING_INTERVAL)
+    log.info("🛑 OI/funding poller detenido")
+
+
 # ── Main ───────────────────────────────────────────────────────
 async def main():
     log.info("🚀 Hermes Ingest — TPS + FVG + Volume Profile")
@@ -461,6 +535,10 @@ async def main():
     rest_task = asyncio.create_task(depth_poller(aggregator, stop_event))
     log.info("✅ Depth poller REST lanzado")
 
+    # OI + funding por REST: el stream @markPrice no entrega nada desde este VPS
+    oi_task = asyncio.create_task(oi_funding_poller(aggregator, stop_event))
+    log.info("✅ OI/funding poller REST lanzado")
+
     ws_url = BINANCE_WS + STREAMS
     last_insert = datetime.now(timezone.utc)
     last_cvd_reset = datetime.now(timezone.utc)
@@ -469,7 +547,7 @@ async def main():
     while True:
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.ws_connect(ws_url) as ws:
+                async with session.ws_connect(ws_url, timeout=30.0, heartbeat=30.0) as ws:
                     log.info("✅ WebSocket conectado a Binance Futures")
 
                     async for msg in ws:
