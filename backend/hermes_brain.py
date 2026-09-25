@@ -8,7 +8,7 @@ para permitir ajuste en tiempo real desde el frontend.
 Incluye módulo de Gestión de Posiciones:
   • Break-Even (2.5R): mueve SL a entrada cuando precio llega a +2.5R
   • Trailing Stop (Swing Lows): SL dinámico siguiendo mínimos de velas 5min
-  • Time-Out (8h): cierre forzado si la posición expira
+  • Time-Out (16h): cierre forzado si la posición expira
 """
 
 import os
@@ -45,7 +45,10 @@ POSITION_MGMT_INTERVAL = 30  # segundos entre ciclos de gestión (cada 6 ciclos 
 SLIPPAGE_SL_PCT = 0.010      # 1.0% del precio de entrada para stop-loss (sync con executor)
 TP_RATIO = 2.0               # OJO: NO se usa en el brain (codigo muerto). El TP real lo
                              # pone el executor con SLIPPAGE_TP_RATIO=6.0 → TP a ~6R.
-MAX_POSITION_HOURS = 8       # horas máximas antes de cierre forzado (sync con executor)
+MAX_POSITION_HOURS = 16      # horas máximas antes de cierre forzado. v1.6.16: estaba en 8
+                             # mientras el executor ya usaba 16 (v1.6.2 lo subio "para dar
+                             # aire al TP 6%") — el comentario decia "sync con executor" pero
+                             # NO lo estaba: el brain alertaba vencimiento 8h antes de tiempo.
 SWING_LOOKBACK = 12           # velas a revisar para swing low/high (antes 3)
 CANDLE_MINUTES = 5           # tamaño de vela para swing analysis
 
@@ -259,7 +262,7 @@ class BrainAnalyzer:
         Evalúa posiciones abiertas y genera alertas de gestión:
         1. Break-Even (2.5R)
         2. Trailing Stop (Swing Lows)
-        3. Time-Out (8h)
+        3. Time-Out (16h)
         """
         mgmt_alerts = []
         if not rows:
