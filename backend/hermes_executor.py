@@ -289,7 +289,12 @@ class Executor:
                 cur.execute(
                     "SELECT * FROM metricas_btc ORDER BY timestamp DESC LIMIT 1"
                 )
-                return cur.fetchone()
+                row = cur.fetchone()
+            # v1.6.16: cerrar la tx de lectura. Con autocommit=False, el SELECT dejaba la
+            # sesion en 'idle in transaction' reteniendo AccessShareLock sobre
+            # metricas_btc (bloqueaba DDL y frenaba el autovacuum).
+            self.conn.commit()
+            return row
         except Exception as e:
             log.error(f"❌ Error leyendo métricas: {e}")
             return None
@@ -313,6 +318,7 @@ class Executor:
                     f"ORDER BY timestamp DESC LIMIT {limit_rows}"
                 )
                 rows = cur.fetchall()
+            self.conn.commit()   # v1.6.16: cierra la tx de lectura (anti idle-in-transaction)
             
             if len(rows) < 6:
                 log.info(f"📊 VWAP: solo {len(rows)} filas con volumen — saltando filtro")
@@ -381,7 +387,8 @@ class Executor:
                     """
                 )
                 row = cur.fetchone()
-                return float(row["total_longs"]), float(row["total_shorts"])
+            self.conn.commit()   # v1.6.16: cierra la tx de lectura
+            return float(row["total_longs"]), float(row["total_shorts"])
         except Exception:
             return 0, 0
 
@@ -722,9 +729,10 @@ class Executor:
                     WHERE estado = 'EJECUTADO'
                 """)
                 count = cur.fetchone()[0]
-                if count > 0:
-                    log.info(f"🔒 {count} trade(s) activo(s) en DB — BLOQUEANDO nuevo trade {side}")
-                    return True
+            self.conn.commit()   # v1.6.16: cierra la tx de lectura
+            if count > 0:
+                log.info(f"🔒 {count} trade(s) activo(s) en DB — BLOQUEANDO nuevo trade {side}")
+                return True
 
             return False
         except Exception as e:
@@ -745,9 +753,10 @@ class Executor:
                     AND timestamp > clock_timestamp() - INTERVAL '%s seconds'
                 """, (side.upper(), seconds))
                 count = cur.fetchone()[0]
-                if count > 0:
-                    log.info(f"⏭️ Trade {side} reciente detectado ({count} en {seconds}s) — saltando duplicado")
-                    return True
+            self.conn.commit()   # v1.6.16: cierra la tx de lectura
+            if count > 0:
+                log.info(f"⏭️ Trade {side} reciente detectado ({count} en {seconds}s) — saltando duplicado")
+                return True
             return False
         except Exception as e:
             log.warning(f"⚠️ Error en has_recent_trade: {e}")
@@ -771,6 +780,7 @@ class Executor:
                     """
                 )
                 count = cur.fetchone()[0]
+            self.conn.commit()   # v1.6.16: cierra la tx de lectura
             if count >= MAX_TRADES_PER_DAY:
                 log.warning(
                     f"🚫 Circuit breaker activo: {count}/{MAX_TRADES_PER_DAY} "
@@ -898,6 +908,7 @@ class Executor:
                         racha += 1
                     else:
                         break
+            self.conn.commit()   # v1.6.16: cierra la tx de lectura
             if racha < MAX_PERDIDAS_SEGUIDAS:
                 st.pop("pausa_hasta_ts", None)
             else:

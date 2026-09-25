@@ -6,9 +6,9 @@ y genera alertas. Los umbrales se leen desde hermes_config
 para permitir ajuste en tiempo real desde el frontend.
 
 Incluye módulo de Gestión de Posiciones:
-  • Break-Even (1R): mueve SL a entrada cuando precio llega a +1R
+  • Break-Even (2.5R): mueve SL a entrada cuando precio llega a +2.5R
   • Trailing Stop (Swing Lows): SL dinámico siguiendo mínimos de velas 5min
-  • Time-Out (2h): cierre forzado si la posición expira
+  • Time-Out (8h): cierre forzado si la posición expira
 """
 
 import os
@@ -43,7 +43,8 @@ PRESION_COMPRA_BAJA = 40   # <40% = presión venta dominante (equiv. a asks 1.5x
 # ── Gestión de Posiciones ──────────────────────────────────────
 POSITION_MGMT_INTERVAL = 30  # segundos entre ciclos de gestión (cada 6 ciclos del brain)
 SLIPPAGE_SL_PCT = 0.010      # 1.0% del precio de entrada para stop-loss (sync con executor)
-TP_RATIO = 2.0               # ratio de take profit (2.0 → 0.2%)
+TP_RATIO = 2.0               # OJO: NO se usa en el brain (codigo muerto). El TP real lo
+                             # pone el executor con SLIPPAGE_TP_RATIO=6.0 → TP a ~6R.
 MAX_POSITION_HOURS = 8       # horas máximas antes de cierre forzado (sync con executor)
 SWING_LOOKBACK = 12           # velas a revisar para swing low/high (antes 3)
 CANDLE_MINUTES = 5           # tamaño de vela para swing analysis
@@ -144,6 +145,7 @@ class BrainAnalyzer:
             ) as cur:
                 cur.execute("SELECT * FROM hermes_config WHERE id = 1")
                 row = cur.fetchone()
+            self.conn.commit()   # v1.6.16: cierra la tx de lectura
 
             if row:
                 self.umbral_liquidaciones = float(
@@ -193,7 +195,9 @@ class BrainAnalyzer:
                         - timedelta(minutes=minutes),
                     ),
                 )
-                return cur.fetchall()
+                rows = cur.fetchall()
+            self.conn.commit()   # v1.6.16: cierra la tx de lectura
+            return rows
         except Exception as e:
             log.error(f"❌ Error leyendo DB: {e}")
             self.conn.rollback()
@@ -220,7 +224,9 @@ class BrainAnalyzer:
                     ORDER BY timestamp DESC LIMIT 1
                     """
                 )
-                return cur.fetchone()
+                row = cur.fetchone()
+            self.conn.commit()   # v1.6.16: cierra la tx de lectura
+            return row
         except Exception as e:
             log.warning(f"⚠️  Error leyendo posición abierta: {e}")
             return None
@@ -251,9 +257,9 @@ class BrainAnalyzer:
     def manage_positions(self, rows):
         """
         Evalúa posiciones abiertas y genera alertas de gestión:
-        1. Break-Even (1R)
+        1. Break-Even (2.5R)
         2. Trailing Stop (Swing Lows)
-        3. Time-Out (2h)
+        3. Time-Out (8h)
         """
         mgmt_alerts = []
         if not rows:
@@ -293,7 +299,7 @@ class BrainAnalyzer:
 
         # ── ¿Es una posición nueva? → Inicializar estado ────
         if self.position_state["trade_id"] != trade_id:
-            r_dist = entry * SLIPPAGE_SL_PCT  # 0.1% del entry
+            r_dist = entry * SLIPPAGE_SL_PCT  # 1.0% del entry = riesgo real en USD
             if side == "LONG":
                 init_sl = entry - r_dist
             else:
@@ -344,14 +350,18 @@ class BrainAnalyzer:
         side_emoji = "🟢" if side == "LONG" else "🔴"
         prefix = "[DRY RUN]" if self.modo_sistema == "SIMULACION" else "[LIVE]"
 
-        # ── REGLA 1: BREAK-EVEN (a 2.5R) ───────────────────────
+        # ── REGLA 1: BREAK-EVEN (a 2.5R) ─────────────────────
+        # v1.6.16: alineado al diseno documentado — el repo Y el propio log ya decian
+        # 2.5R; el runtime se habia quedado en 1R. Medido sobre 203 trades: el nivel de
+        # BE apenas cambia el resultado (197 identicos), pero el BE@1R encendia el
+        # TRAILING demasiado pronto para un TP que esta a ~6R.
         if not self.position_state["breakeven_activated"] and profit_r >= 2.5:
             be_sl = entry  # Mover SL al precio de entrada
             self.position_state["current_sl"] = be_sl
             self.position_state["breakeven_activated"] = True
             msg = (
                 f"{prefix} 🎯 BREAK-EVEN ACTIVADO #{trade_id} {side}: "
-                f"Precio alcanzó +1R (${profit_usd:.2f}) → "
+                f"Precio alcanzó +{profit_r:.1f}R (${profit_usd:.2f}) → "
                 f"SL movido a ENTRY ${be_sl:.2f}"
             )
             log.info(f"🟢 {msg}")
@@ -359,7 +369,7 @@ class BrainAnalyzer:
             mgmt_alerts.append({"type": "MGMT_BREAK_EVEN", "severity": "INFO", "message": msg})
             self.update_trade_sl_db(trade_id, be_sl)
 
-        # ── REGLA 2: TRAILING STOP (después de 1R) ───────────
+        # ── REGLA 2: TRAILING STOP (arranca tras el break-even, 2.5R) ──
         elif self.position_state["breakeven_activated"] and swing_low is not None:
             if side == "LONG":
                 # Trailing LONG: SL por debajo del swing low con buffer mínimo
