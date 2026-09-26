@@ -93,16 +93,25 @@ la rebanada de 20 niveles significaba "casi siempre".
 1. **Los 78,789 "trades" son filas solapadas**, no observaciones independientes: hay una
    señal cada ~11 s, así que el tamaño muestral efectivo es órdenes de magnitud menor. Los
    porcentajes son indicativos; los intervalos de confianza serían enormes.
-2. **Comisiones**: con margen 30% y 5x, el nocional es ~1.5× el balance. Ida y vuelta a
-   taker (~0.1% del nocional) cuesta **~0.1R por trade**, o sea **~85% del edge bruto
-   medido (+0.117R)**. Sin contar funding ni slippage. **El edge medido probablemente no
-   sobrevive a los costes.**
-3. **La simulación aproxima la gestión**: SL fijo 1R + BE a 2.5R + timeout. NO replica el
+2. **Comisiones — medido, no estimado.** Nocional total de los 999 trades cerrados:
+   **$178,628**. Ida y vuelta a taker (0.1% del nocional) = **$178.63**; el PnL neto real
+   (API de income de Binance) = **$122.50**. O sea las comisiones se comieron el **59% de la
+   ganancia bruta** (~$301). Sin contar funding ni slippage. El edge bruto medido (+0.117R)
+   es del mismo orden que el coste de operar.
+3. **`balance_antes` NO es equity: es balance LIBRE (`balance["USDT"]["free"]`).**
+   Consecuencia importante: **cualquier cálculo de rentabilidad sobre esa columna es
+   inválido**. El mínimo histórico de $14.25 NO fue una casi-liquidación (era margen
+   bloqueado en una posición abierta) y los saltos de 168→250 no son depósitos (es margen
+   que vuelve al cerrar). Además el sizing (`margen = 30% del balance`) usa el balance
+   libre, así que el tamaño de posición se encoge mientras hay margen comprometido.
+   → No hay cifra fiable de retorno sobre capital. Lo único limpio es el PnL neto por trade
+   de la API de Binance.
+4. **La simulación aproxima la gestión**: SL fijo 1R + BE a 2.5R + timeout. NO replica el
    trailing por swing-lows. La excursión además se mide sobre snapshots de ~5 s, así que
    los extremos reales son más grandes que los medidos (sesgo en ambos sentidos).
-4. **El libro honesto tiene ~6 h.** No hay datos futuros suficientes para medir si el ratio
+5. **El libro honesto tiene ~6 h.** No hay datos futuros suficientes para medir si el ratio
    REAL predice resultados. Eso requiere dejar correr el modo sombra días.
-5. La condición C (liq ≥ $5M) es **inalcanzable** con el feed real (~$50k por evento).
+6. La condición C (liq ≥ $5M) es **inalcanzable** con el feed real (~$50k por evento).
    Cualquier edge que aportara históricamente venía del bug del `NOW()`.
 
 ## Siguiente
