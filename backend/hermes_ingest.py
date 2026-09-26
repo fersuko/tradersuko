@@ -36,7 +36,11 @@ SYMBOL = os.getenv("SYMBOL", "BTC/USDT:USDT")
 # OJO: hay que cortar el sufijo ":USDT" PRIMERO. `SYMBOL.replace("/", "")` a secas da
 # "BTCUSDT:USDT" → Binance responde -1121 Invalid symbol (bug real de sep-2026).
 BINANCE_SYMBOL = SYMBOL.split(":")[0].replace("/", "")
-DEPTH_LIMIT = 50
+DEPTH_LIMIT = 1000  # v1.6.17: era 50. Medido el 26-sep: con 50 niveles el libro
+                    # visible era $1.03M cuando el real dentro de ±1% es $31.65M
+                    # → el bot veía el **3.2%** del libro, y la ratio bids/asks se
+                    # DA VUELTA según la profundidad (1.00x con 50 vs 0.84x con 1000).
+                    # La condición B se evaluaba sobre ruido.
 DEPTH_PCT = Decimal("0.01")
 DEPTH_INTERVAL = 5
 PRICE_BUCKET_SIZE = 10  # $10 USD para volume profile
@@ -44,9 +48,13 @@ PRICE_BUCKET_SIZE = 10  # $10 USD para volume profile
 BINANCE_WS = "wss://fstream.binance.com/stream?streams="
 STREAMS = (
     "btcusdt@trade/"
-    "btcusdt@depth20@100ms/"
+    # v1.6.17: SE QUITÓ "btcusdt@depth20@100ms". Daba 20 niveles (~$0.8M) y
+    # SOBRESCRIBÍA cada 100 ms el valor bueno del poller REST (1000 niveles,
+    # ~$32M), así que subir DEPTH_LIMIT no servía de nada. Ahora el poller REST
+    # es la fuente ÚNICA de profundidad y de presión de compra.
     "btcusdt@markPrice@1s/"
-    "!forceOrder@arr"
+    "!forceOrder@arr"   # mudo en este host: las liquidaciones reales van por el
+                        # worker dedicado al host alterno (liquidations_real_worker)
 )
 
 INSERT_INTERVAL = 5
@@ -71,6 +79,21 @@ COINBASE_PRODUCT = os.getenv("COINBASE_PRODUCT", "BTC-USD")
 CVD_VENUE_RESET = 300      # 5 min, igual que el CVD de Binance
 OKX_PING_INTERVAL = 20     # OKX cierra la conexión si pasa >30 s sin tráfico
 COINBASE_PING_INTERVAL = 20
+
+# ── Liquidaciones REALES (modo sombra) ─────────────────────────
+# El feed real de Binance SÍ existe, pero SOLO en el host alterno: en
+# `fstream.binance.com` entrega **0 frames** desde este VPS (mientras `@trade`
+# entrega cientos). Ver Trading/Journal/Hallazgo-2026-09-26-Host-WS-Binance.
+#
+# Se instala en MODO SOMBRA: se guarda en las columnas `liq_real_*` SIN filtrar la
+# señal (la señal sigue usando `liquidaciones_*` = la heurística del CVD). Motivo:
+# el umbral actual ($5M/min) se calibró CONTRA esa heurística, y la sonda del
+# 26-sep midió **0 liquidaciones de BTC en 21.7 min** → conectar el feed real con
+# ese umbral dejaría al bot casi sin operar. Primero se acumulan datos honestos
+# alineados con los trades; después se decide con evidencia.
+LIQ_WS = "wss://fstream.binancefuture.com/stream?streams=!forceOrder@arr"
+LIQ_SYMBOL = "BTCUSDT"   # !forceOrder@arr trae TODOS los símbolos → filtrar o se
+                         # mezclan liquidaciones de ENA/SOL/etc. en las de BTC
 
 # ── Logging ────────────────────────────────────────────────────
 logging.basicConfig(
@@ -104,6 +127,9 @@ class DataAggregator:
         self.presion_compra = Decimal("0")
         self.liquidaciones_longs = Decimal("0")
         self.liquidaciones_shorts = Decimal("0")
+        # v1.6.17: liquidaciones REALES (MODO SOMBRA — se guardan pero NO filtran la señal)
+        self.liq_real_longs = Decimal("0")
+        self.liq_real_shorts = Decimal("0")
         self.trade_count = 0
         self.trades_per_second = Decimal("0")
         # FVG activo
@@ -363,6 +389,9 @@ class DataAggregator:
             "presion_compra": self.presion_compra,
             "liquidaciones_longs": self.liquidaciones_longs,
             "liquidaciones_shorts": self.liquidaciones_shorts,
+            # v1.6.17: modo sombra — dato real, todavía sin uso en la señal
+            "liq_real_longs": self.liq_real_longs,
+            "liq_real_shorts": self.liq_real_shorts,
             "alerta_activa": False,
             "trade_count": self.trade_count,
             "trades_per_second": tps,
@@ -394,6 +423,7 @@ class DBInserter:
                         orderbook_depth_buyer, orderbook_depth_seller,
                         cvd_binance, cvd_okx, cvd_coinbase, presion_compra,
                         liquidaciones_longs, liquidaciones_shorts,
+                        liq_real_longs, liq_real_shorts,
                         alerta_activa, trades_per_second,
                         precio_alto_fvg, precio_bajo_fvg,
                         volumen
@@ -403,6 +433,7 @@ class DBInserter:
                         %(orderbook_depth_seller)s, %(cvd_binance)s,
                         %(cvd_okx)s, %(cvd_coinbase)s, %(presion_compra)s,
                         %(liquidaciones_longs)s, %(liquidaciones_shorts)s,
+                        %(liq_real_longs)s, %(liq_real_shorts)s,
                         %(alerta_activa)s, %(trades_per_second)s,
                         %(precio_alto_fvg)s, %(precio_bajo_fvg)s,
                         %(volumen)s
@@ -657,6 +688,74 @@ async def coinbase_cvd_worker(aggregator: DataAggregator, stop_event: asyncio.Ev
     log.info("🛑 CVD Coinbase detenido")
 
 
+# ── Tarea: liquidaciones REALES (MODO SOMBRA) ──────────────────
+#
+# Semántica del lado (importante, y el handler viejo la tiene al revés):
+#   Binance manda `S` = el lado de la ORDEN forzada.
+#     S=SELL → se cerró a la fuerza un LONG  → es una LIQUIDACIÓN DE LONGS
+#     S=BUY  → se cerró a la fuerza un SHORT → es una LIQUIDACIÓN DE SHORTS
+#   `process_force_order` (arriba) hace lo contrario: suma S=SELL a
+#   `liquidaciones_shorts`. Hoy da igual porque esas columnas las llena la
+#   heurística, no ese handler; pero al activar el feed real HAY QUE USAR LA
+#   SEMÁNTICA CORRECTA (la de aquí), o el signo de la señal sale invertido.
+async def liquidations_real_worker(aggregator: DataAggregator, stop_event: asyncio.Event):
+    """Acumula liquidaciones REALES de BTCUSDT en `liq_real_*` (modo sombra).
+
+    Host ALTERNO obligatorio (`fstream.binancefuture.com`): en `.com` este stream
+    entrega 0 frames desde este VPS.
+    Filtra por símbolo: `!forceOrder@arr` trae TODOS los mercados.
+    NO filtra la señal todavía — solo acumula para poder medirlo después.
+    """
+    ok_once = False
+    n_btc = 0
+    while not stop_event.is_set():
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(LIQ_WS, timeout=25, heartbeat=25) as ws:
+                    log.info("✅ Liquidaciones REALES conectadas (host alterno, modo sombra)")
+                    while not stop_event.is_set():
+                        try:
+                            msg = await asyncio.wait_for(ws.receive(), timeout=30)
+                        except asyncio.TimeoutError:
+                            continue
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            if msg.data == "pong":
+                                continue
+                            try:
+                                o = json.loads(msg.data).get("data", {}).get("o", {})
+                            except Exception:
+                                continue
+                            if o.get("s") != LIQ_SYMBOL:
+                                continue  # ← filtro clave: solo BTCUSDT
+                            try:
+                                usd = (Decimal(str(o.get("q", "0")))
+                                       * Decimal(str(o.get("ap") or o.get("p") or "0")))
+                            except Exception:
+                                continue
+                            async with aggregator.lock:
+                                if o.get("S") == "SELL":
+                                    aggregator.liq_real_longs += usd    # se liquidó un LONG
+                                else:
+                                    aggregator.liq_real_shorts += usd   # se liquidó un SHORT
+                            n_btc += 1
+                            log.info(f"💥 LIQ REAL {'LONG' if o.get('S')=='SELL' else 'SHORT'} "
+                                     f"${float(usd):,.0f} @ {o.get('ap') or o.get('p')} "
+                                     f"(evento #{n_btc} de BTCUSDT)")
+                            if not ok_once:
+                                log.info("✅ Liquidaciones REALES fluyendo (BTCUSDT)")
+                                ok_once = True
+                        elif msg.type in (aiohttp.WSMsgType.CLOSE,
+                                          aiohttp.WSMsgType.ERROR):
+                            log.warning("⚠️ Liquidaciones reales: conexión cerrada, reconectando")
+                            break
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning(f"⚠️ Liquidaciones reales reconectando: {type(e).__name__}: {e}")
+        await asyncio.sleep(RECONNECT_DELAY)
+    log.info("🛑 Liquidaciones reales detenido")
+
+
 # ── Main ───────────────────────────────────────────────────────
 async def main():
     log.info("🚀 Hermes Ingest — TPS + FVG + Volume Profile")
@@ -683,6 +782,10 @@ async def main():
     okx_task = asyncio.create_task(okx_cvd_worker(aggregator, stop_event))
     cb_task = asyncio.create_task(coinbase_cvd_worker(aggregator, stop_event))
     log.info("✅ Workers CVD multi-venue lanzados (OKX + Coinbase)")
+
+    # v1.6.17: liquidaciones REALES en modo sombra (no filtran la señal)
+    liq_task = asyncio.create_task(liquidations_real_worker(aggregator, stop_event))
+    log.info("✅ Worker de liquidaciones REALES lanzado (modo sombra)")
 
     ws_url = BINANCE_WS + STREAMS
     last_insert = datetime.now(timezone.utc)
@@ -739,6 +842,8 @@ async def main():
                                 aggregator.cvd_binance = Decimal("0")
                                 aggregator.cvd_okx = Decimal("0")
                                 aggregator.cvd_coinbase = Decimal("0")
+                                aggregator.liq_real_longs = Decimal("0")
+                                aggregator.liq_real_shorts = Decimal("0")
                                 last_cvd_reset = now
                                 log.info("🔄 CVD reseteado — ventana de 5 minutos")
 
