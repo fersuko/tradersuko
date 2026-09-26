@@ -27,7 +27,7 @@ def get_config() -> dict:
         "port": int(os.getenv("DB_PORT", "5432")),
         "dbname": os.getenv("DB_NAME", "hermes_trading"),
         "user": os.getenv("DB_USER", "hermes_trader"),
-        "password": os.getenv("DB_PASS", "H3rm3s_Tr4d1ng_S3cur3_P4ss_2026!"),
+        "password": os.getenv("DB_PASS", ""),
     }
 
 
