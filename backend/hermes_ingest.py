@@ -833,6 +833,11 @@ async def main():
                             # Resetear acumuladores
                             aggregator.liquidaciones_longs = Decimal("0")
                             aggregator.liquidaciones_shorts = Decimal("0")
+                            # v1.6.16: liq_real_* se resetea por CICLO (igual que las de arriba).
+                            # Antes solo se reseteaba junto al CVD (cada 5 min) → el mismo valor
+                            # se reescribía en ~60 filas y sumar la columna inflaba el volumen ×60.
+                            aggregator.liq_real_longs = Decimal("0")
+                            aggregator.liq_real_shorts = Decimal("0")
                             aggregator.trade_count = 0
                             last_insert = now
 
@@ -842,8 +847,6 @@ async def main():
                                 aggregator.cvd_binance = Decimal("0")
                                 aggregator.cvd_okx = Decimal("0")
                                 aggregator.cvd_coinbase = Decimal("0")
-                                aggregator.liq_real_longs = Decimal("0")
-                                aggregator.liq_real_shorts = Decimal("0")
                                 last_cvd_reset = now
                                 log.info("🔄 CVD reseteado — ventana de 5 minutos")
 
