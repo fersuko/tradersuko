@@ -151,6 +151,51 @@ def seccion_b(conn, serie: Serie, p: Params, horizonte_h: int = 16):
         print("   sin señales")
 
 
+def seccion_d(serie: Serie, p: Params, horizontes=(1, 2, 4)):
+    """¿El ratio REAL del libro predice el retorno futuro?
+
+    Se mide a horizontes CORTOS a propósito: una señal de order flow es de vida corta, y
+    con horizonte corto se obtienen muchas más ventanas independientes por día que con las
+    16h del timeout. Es la vía para tener una lectura en DÍAS en vez de en semanas.
+    """
+    print("\n" + "=" * 78)
+    print("[D] ¿El ratio REAL predice el retorno futuro corto? (ventana honesta del libro)")
+    print("=" * 78)
+    precio = np.array([float(r["precio"]) for r in serie.rows])
+    ts = np.array([r["timestamp"].timestamp() for r in serie.rows])
+    idx = [i for i, r in enumerate(serie.rows)
+           if r["timestamp"] >= HONEST_BOOK_SINCE and float(r["orderbook_depth_seller"] or 0) > 0]
+    if len(idx) < 60:
+        print(f"   muestra insuficiente todavía ({len(idx)} filas honestas) — volver más adelante")
+        return
+    ratios = np.array([float(serie.rows[i]["orderbook_depth_buyer"] or 0)
+                       / float(serie.rows[i]["orderbook_depth_seller"]) for i in idx])
+    print(f"   filas honestas: {len(idx):,}")
+    for h in horizontes:
+        rets = np.full(len(idx), np.nan)
+        for k, i in enumerate(idx):
+            j = int(np.searchsorted(ts, ts[i] + h * 3600, side="right")) - 1
+            if j > i:
+                rets[k] = precio[j] / precio[i] - 1.0
+        ok = ~np.isnan(rets)
+        if ok.sum() < 60:
+            print(f"\n   ── horizonte {h}h ── ventana futura insuficiente "
+                  f"({int(ok.sum())} filas con futuro completo)")
+            continue
+        q = np.quantile(ratios[ok], [0, 1/3, 2/3, 1.0])
+        print(f"\n   ── horizonte {h}h ── n={int(ok.sum()):,}  "
+              f"correlación ratio~retorno: {np.corrcoef(ratios[ok], rets[ok])[0,1]:+.3f}")
+        print(f"      {'tercil de ratio':<18} {'n':>7} {'ret medio':>11} {'% positivo':>12}")
+        for nombre, lo, hi in (("bajo", q[0], q[1]), ("medio", q[1], q[2]), ("alto", q[2], q[3])):
+            sel = (ratios[ok] >= lo) & (ratios[ok] <= hi if nombre == "alto" else ratios[ok] < hi)
+            if sel.sum() == 0:
+                continue
+            print(f"      {nombre:<18} {int(sel.sum()):>7} {rets[ok][sel].mean()*100:>10.4f}% "
+                  f"{(rets[ok][sel] > 0).mean()*100:>11.1f}%")
+    print("\n   Si el tercil ALTO no bate al BAJO, el ratio real no tiene poder predictivo")
+    print("   (o el efecto es más largo que estos horizontes).")
+
+
 def seccion_c(conn):
     print("\n" + "=" * 78)
     print("[C] ¿SIRVIÓ LA CONDICIÓN B FALSA? — ratio registrado vs PnL realizado")
@@ -196,4 +241,5 @@ if __name__ == "__main__":
     seccion_a(conn, serie, p)
     seccion_b(conn, serie, p, a.horizonte_h)
     seccion_c(conn)
+    seccion_d(serie, p)
     conn.close()
